@@ -77,7 +77,6 @@ jobs:
           import android.content.Intent;
           import android.content.pm.PackageManager;
           import android.net.Uri;
-          import android.os.Build;
           import android.provider.Settings;
           import android.telephony.SmsManager;
 
@@ -86,11 +85,16 @@ jobs:
           import com.getcapacitor.PluginCall;
           import com.getcapacitor.PluginMethod;
           import com.getcapacitor.annotation.CapacitorPlugin;
-          import com.getcapacitor.annotation.PermissionCallback;
 
           @CapacitorPlugin(name = "MyraNative")
           public class MyraNativePlugin extends Plugin {
 
+              /*
+               * Microphone permission is requested by WebView
+               * through navigator.mediaDevices.getUserMedia().
+               *
+               * We only report the current Android permission state here.
+               */
               @PluginMethod
               public void requestPermission(PluginCall call) {
 
@@ -100,9 +104,7 @@ jobs:
                   if (permission == null ||
                       permission.trim().isEmpty()) {
 
-                      call.reject(
-                              "Permission is required"
-                      );
+                      call.reject("Permission is required");
                       return;
                   }
 
@@ -132,108 +134,32 @@ jobs:
 
                       case "POST_NOTIFICATIONS":
 
-                          if (Build.VERSION.SDK_INT >= 33) {
-
+                          if (android.os.Build.VERSION.SDK_INT >= 33) {
                               androidPermission =
                                       Manifest.permission.POST_NOTIFICATIONS;
-
                           } else {
-
-                              JSObject result =
+                              JSObject oldResult =
                                       new JSObject();
 
-                              result.put(
+                              oldResult.put(
                                       "granted",
                                       true
                               );
 
-                              call.resolve(result);
+                              call.resolve(oldResult);
                               return;
                           }
 
                           break;
 
                       default:
-
                           call.reject(
                                   "Unsupported permission"
                           );
-
                           return;
                   }
 
-                  if (getContext().checkSelfPermission(
-                          androidPermission
-                  ) == PackageManager.PERMISSION_GRANTED) {
-
-                      JSObject result =
-                              new JSObject();
-
-                      result.put(
-                              "granted",
-                              true
-                      );
-
-                      call.resolve(result);
-
-                  } else {
-
-                      requestPermissions(
-                              call,
-                              new String[]{
-                                      androidPermission
-                              }
-                      );
-                  }
-              }
-
-              @PermissionCallback
-              private void permissionCallback(
-                      PluginCall call
-              ) {
-
-                  String permission =
-                          call.getString("permission");
-
-                  String androidPermission = null;
-
-                  if ("RECORD_AUDIO".equals(permission)) {
-
-                      androidPermission =
-                              Manifest.permission.RECORD_AUDIO;
-
-                  } else if (
-                          "READ_CONTACTS".equals(permission)
-                  ) {
-
-                      androidPermission =
-                              Manifest.permission.READ_CONTACTS;
-
-                  } else if (
-                          "CALL_PHONE".equals(permission)
-                  ) {
-
-                      androidPermission =
-                              Manifest.permission.CALL_PHONE;
-
-                  } else if (
-                          "SEND_SMS".equals(permission)
-                  ) {
-
-                      androidPermission =
-                              Manifest.permission.SEND_SMS;
-
-                  } else if (
-                          "POST_NOTIFICATIONS".equals(permission)
-                          && Build.VERSION.SDK_INT >= 33
-                  ) {
-
-                      androidPermission =
-                              Manifest.permission.POST_NOTIFICATIONS;
-                  }
-
                   boolean granted =
-                          androidPermission != null &&
                           getContext().checkSelfPermission(
                                   androidPermission
                           ) == PackageManager.PERMISSION_GRANTED;
@@ -241,6 +167,11 @@ jobs:
                   JSObject result =
                           new JSObject();
 
+                  /*
+                   * If Android has not granted it yet, return false.
+                   * The JavaScript side will then use getUserMedia(),
+                   * which triggers the Android WebView permission flow.
+                   */
                   result.put(
                           "granted",
                           granted
@@ -261,7 +192,6 @@ jobs:
                       call.reject(
                               "Phone number is required"
                       );
-
                       return;
                   }
 
@@ -272,7 +202,6 @@ jobs:
                       call.reject(
                               "CALL_PHONE permission not granted"
                       );
-
                       return;
                   }
 
@@ -318,7 +247,6 @@ jobs:
                       call.reject(
                               "Phone number is required"
                       );
-
                       return;
                   }
 
@@ -333,7 +261,6 @@ jobs:
                       call.reject(
                               "SEND_SMS permission not granted"
                       );
-
                       return;
                   }
 
@@ -365,9 +292,7 @@ jobs:
               public void openApp(PluginCall call) {
 
                   String packageName =
-                          call.getString(
-                                  "packageName"
-                          );
+                          call.getString("packageName");
 
                   if (packageName == null ||
                       packageName.trim().isEmpty()) {
@@ -375,7 +300,6 @@ jobs:
                       call.reject(
                               "Package name is required"
                       );
-
                       return;
                   }
 
@@ -393,7 +317,6 @@ jobs:
                           call.reject(
                                   "App is not installed"
                           );
-
                           return;
                       }
 
@@ -506,22 +429,45 @@ jobs:
                                                                   PackageManager.PERMISSION_GRANTED;
 
                                                           boolean audioRequested =
-                                                                  request.getResources() != null;
+                                                                  false;
+
+                                                          if (request.getResources() != null) {
+
+                                                              for (String resource :
+                                                                      request.getResources()) {
+
+                                                                  if (
+                                                                      PermissionRequest
+                                                                          .RESOURCE_AUDIO_CAPTURE
+                                                                          .equals(resource)
+                                                                  ) {
+
+                                                                      audioRequested =
+                                                                              true;
+
+                                                                      break;
+                                                                  }
+                                                              }
+                                                          }
+
+                                                          String origin =
+                                                                  request.getOrigin() == null
+                                                                          ? ""
+                                                                          : request.getOrigin()
+                                                                                  .toString();
 
                                                           boolean localOrigin =
-                                                                  request.getOrigin() != null &&
-                                                                  (
-                                                                      request.getOrigin()
-                                                                              .toString()
-                                                                              .startsWith(
-                                                                                      "https://localhost"
-                                                                              )
+                                                                  origin.startsWith(
+                                                                          "https://localhost"
+                                                                  ) ||
+                                                                  origin.startsWith(
+                                                                          "http://localhost"
                                                                   );
 
                                                           if (
-                                                                  microphoneGranted &&
-                                                                  audioRequested &&
-                                                                  localOrigin
+                                                              microphoneGranted &&
+                                                              audioRequested &&
+                                                              localOrigin
                                                           ) {
 
                                                               request.grant(
