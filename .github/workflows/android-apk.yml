@@ -25,23 +25,19 @@ jobs:
       - name: Build React app
         run: npm run build
 
-      - name: Add Android platform
-        run: npx cap add android
-
-      - name: Sync Capacitor
-        run: npx cap sync android
-
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
 
-      # ---------------------------------------------------------
-      # MYRA NATIVE PLUGIN
-      # ---------------------------------------------------------
+      - name: Add Android platform
+        run: npx cap add android
 
-      - name: Create MYRA Native Plugin
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      - name: Add MYRA Native Plugin
         run: |
           mkdir -p android/app/src/main/java/com/myra/ai
 
@@ -74,7 +70,7 @@ jobs:
                       return;
                   }
 
-                  String androidPermission = null;
+                  String androidPermission;
 
                   switch (permission) {
                       case "RECORD_AUDIO":
@@ -96,7 +92,7 @@ jobs:
                       case "POST_NOTIFICATIONS":
                           if (Build.VERSION.SDK_INT >= 33) {
                               androidPermission =
-                                      Manifest.permission.POST_NOTIFICATIONS;
+                                  Manifest.permission.POST_NOTIFICATIONS;
                           } else {
                               JSObject result = new JSObject();
                               result.put("granted", true);
@@ -112,25 +108,23 @@ jobs:
 
                   if (getContext().checkSelfPermission(androidPermission)
                           == PackageManager.PERMISSION_GRANTED) {
-
                       JSObject result = new JSObject();
                       result.put("granted", true);
                       call.resolve(result);
-
-                  } else {
-                      requestPermissions(
-                              new String[]{androidPermission},
-                              "permissionCallback"
-                      );
-
-                      call.save();
+                      return;
                   }
+
+                  requestPermissions(
+                      new String[]{androidPermission},
+                      "permissionCallback"
+                  );
+
+                  call.save();
               }
 
               @com.getcapacitor.annotation.PermissionCallback
               private void permissionCallback(PluginCall call) {
                   String permission = call.getString("permission");
-
                   String androidPermission = null;
 
                   if ("RECORD_AUDIO".equals(permission)) {
@@ -144,12 +138,13 @@ jobs:
                   } else if ("POST_NOTIFICATIONS".equals(permission)
                           && Build.VERSION.SDK_INT >= 33) {
                       androidPermission =
-                              Manifest.permission.POST_NOTIFICATIONS;
+                          Manifest.permission.POST_NOTIFICATIONS;
                   }
 
-                  boolean granted = androidPermission != null &&
-                          getContext().checkSelfPermission(androidPermission)
-                          == PackageManager.PERMISSION_GRANTED;
+                  boolean granted =
+                      androidPermission != null &&
+                      getContext().checkSelfPermission(androidPermission)
+                      == PackageManager.PERMISSION_GRANTED;
 
                   JSObject result = new JSObject();
                   result.put("granted", granted);
@@ -157,147 +152,41 @@ jobs:
               }
 
               @PluginMethod
-              public void call(PluginCall call) {
-                  String phone = call.getString("phone");
-
-                  if (phone == null || phone.trim().isEmpty()) {
-                      call.reject("Phone number is required");
-                      return;
-                  }
-
-                  if (getContext().checkSelfPermission(
-                          Manifest.permission.CALL_PHONE)
-                          != PackageManager.PERMISSION_GRANTED) {
-
-                      call.reject("CALL_PHONE permission not granted");
-                      return;
-                  }
-
-                  try {
-                      Intent intent = new Intent(
-                              Intent.ACTION_CALL,
-                              Uri.parse("tel:" + phone)
-                      );
-
-                      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                      getContext().startActivity(intent);
-
-                      call.resolve();
-
-                  } catch (Exception e) {
-                      call.reject("Unable to make call: " + e.getMessage());
-                  }
-              }
-
-              @PluginMethod
-              public void sms(PluginCall call) {
-                  String phone = call.getString("phone");
-                  String message = call.getString("message");
-
-                  if (phone == null || phone.trim().isEmpty()) {
-                      call.reject("Phone number is required");
-                      return;
-                  }
-
-                  if (message == null) {
-                      message = "";
-                  }
-
-                  if (getContext().checkSelfPermission(
-                          Manifest.permission.SEND_SMS)
-                          != PackageManager.PERMISSION_GRANTED) {
-
-                      call.reject("SEND_SMS permission not granted");
-                      return;
-                  }
-
-                  try {
-                      SmsManager smsManager = SmsManager.getDefault();
-
-                      smsManager.sendTextMessage(
-                              phone,
-                              null,
-                              message,
-                              null,
-                              null
-                      );
-
-                      call.resolve();
-
-                  } catch (Exception e) {
-                      call.reject("Unable to send SMS: " + e.getMessage());
-                  }
-              }
-
-              @PluginMethod
-              public void openApp(PluginCall call) {
-                  String packageName = call.getString("packageName");
-
-                  if (packageName == null || packageName.trim().isEmpty()) {
-                      call.reject("Package name is required");
-                      return;
-                  }
-
-                  try {
-                      Intent intent =
-                              getContext()
-                                      .getPackageManager()
-                                      .getLaunchIntentForPackage(packageName);
-
-                      if (intent == null) {
-                          call.reject("App is not installed");
-                          return;
-                      }
-
-                      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                      getContext().startActivity(intent);
-
-                      call.resolve();
-
-                  } catch (Exception e) {
-                      call.reject("Unable to open app: " + e.getMessage());
-                  }
-              }
-
-              @PluginMethod
               public void openAppSettings(PluginCall call) {
                   try {
                       Intent intent = new Intent(
-                              Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+                          Settings.ACTION_APPLICATION_DETAILS_SETTINGS
                       );
 
                       intent.setData(
-                              Uri.parse(
-                                      "package:" +
-                                      getContext().getPackageName()
-                              )
+                          Uri.parse(
+                              "package:" +
+                              getContext().getPackageName()
+                          )
                       );
 
                       intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                       getContext().startActivity(intent);
 
                       call.resolve();
-
                   } catch (Exception e) {
                       call.reject(
-                              "Unable to open app settings: " +
-                              e.getMessage()
+                          "Unable to open app settings: " +
+                          e.getMessage()
                       );
                   }
               }
           }
           EOF
 
-      # ---------------------------------------------------------
-      # REGISTER PLUGIN
-      # ---------------------------------------------------------
-
       - name: Register MYRA Native Plugin
         run: |
           python3 - <<'PY'
           from pathlib import Path
 
-          p = Path("android/app/src/main/java/com/myra/ai/MainActivity.java")
+          p = Path(
+              "android/app/src/main/java/com/myra/ai/MainActivity.java"
+          )
 
           text = p.read_text()
 
@@ -305,69 +194,28 @@ jobs:
               text = text.replace(
                   "import com.getcapacitor.BridgeActivity;",
                   "import com.getcapacitor.BridgeActivity;\n"
-                  "import com.getcapacitor.Plugin;"
+                  "import com.myra.ai.MyraNativePlugin;"
               )
 
               text = text.replace(
                   "public class MainActivity extends BridgeActivity {",
-                  "public class MainActivity extends BridgeActivity {\n"
-                  "\n"
-                  "    @Override\n"
-                  "    public void onCreate(android.os.Bundle savedInstanceState) {\n"
-                  "        registerPlugin(MyraNativePlugin.class);\n"
-                  "        super.onCreate(savedInstanceState);\n"
-                  "    }"
+                  """public class MainActivity extends BridgeActivity {
+
+              @Override
+              public void onCreate(android.os.Bundle savedInstanceState) {
+                  registerPlugin(MyraNativePlugin.class);
+                  super.onCreate(savedInstanceState);
+              }"""
               )
 
               p.write_text(text)
           PY
 
-      # ---------------------------------------------------------
-      # ANDROID PERMISSIONS
-      # ---------------------------------------------------------
-
-      - name: Add MYRA Android Permissions
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path("android/app/src/main/AndroidManifest.xml")
-          text = p.read_text()
-
-          permissions = [
-              '<uses-permission android:name="android.permission.RECORD_AUDIO" />',
-              '<uses-permission android:name="android.permission.READ_CONTACTS" />',
-              '<uses-permission android:name="android.permission.CALL_PHONE" />',
-              '<uses-permission android:name="android.permission.SEND_SMS" />',
-              '<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />'
-          ]
-
-          insert = "\n".join(permissions) + "\n"
-
-          if "android.permission.RECORD_AUDIO" not in text:
-              text = text.replace(
-                  "<manifest",
-                  "<manifest",
-                  1
-              )
-
-              pos = text.find(">") + 1
-              text = text[:pos] + "\n" + insert + text[pos:]
-
-          p.write_text(text)
-          PY
-
-      # ---------------------------------------------------------
-      # BUILD APK
-      # ---------------------------------------------------------
-
       - name: Build Debug APK
         working-directory: android
-        run: ./gradlew assembleDebug
-
-      # ---------------------------------------------------------
-      # UPLOAD APK
-      # ---------------------------------------------------------
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
