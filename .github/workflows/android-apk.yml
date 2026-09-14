@@ -34,7 +34,7 @@ jobs:
       - name: Add Android platform
         run: npx cap add android
 
-      - name: Add MYRA permissions
+      - name: Add MYRA Android permissions
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -93,127 +93,209 @@ jobs:
 
               @PluginMethod
               public void requestPermission(PluginCall call) {
-                  String permission = call.getString("permission");
 
-                  if (permission == null) {
-                      call.reject("Permission is required");
+                  String permission =
+                          call.getString("permission");
+
+                  if (permission == null ||
+                      permission.trim().isEmpty()) {
+
+                      call.reject(
+                              "Permission is required"
+                      );
                       return;
                   }
 
                   String androidPermission = null;
 
                   switch (permission) {
+
                       case "RECORD_AUDIO":
-                          androidPermission = Manifest.permission.RECORD_AUDIO;
+                          androidPermission =
+                                  Manifest.permission.RECORD_AUDIO;
                           break;
 
                       case "READ_CONTACTS":
-                          androidPermission = Manifest.permission.READ_CONTACTS;
+                          androidPermission =
+                                  Manifest.permission.READ_CONTACTS;
                           break;
 
                       case "CALL_PHONE":
-                          androidPermission = Manifest.permission.CALL_PHONE;
+                          androidPermission =
+                                  Manifest.permission.CALL_PHONE;
                           break;
 
                       case "SEND_SMS":
-                          androidPermission = Manifest.permission.SEND_SMS;
+                          androidPermission =
+                                  Manifest.permission.SEND_SMS;
                           break;
 
                       case "POST_NOTIFICATIONS":
+
                           if (Build.VERSION.SDK_INT >= 33) {
+
                               androidPermission =
                                       Manifest.permission.POST_NOTIFICATIONS;
+
                           } else {
-                              JSObject result = new JSObject();
-                              result.put("granted", true);
+
+                              JSObject result =
+                                      new JSObject();
+
+                              result.put(
+                                      "granted",
+                                      true
+                              );
+
                               call.resolve(result);
                               return;
                           }
+
                           break;
 
                       default:
-                          call.reject("Unsupported permission");
+
+                          call.reject(
+                                  "Unsupported permission"
+                          );
+
                           return;
                   }
 
-                  if (getContext().checkSelfPermission(androidPermission)
-                          == PackageManager.PERMISSION_GRANTED) {
+                  if (getContext().checkSelfPermission(
+                          androidPermission
+                  ) == PackageManager.PERMISSION_GRANTED) {
 
-                      JSObject result = new JSObject();
-                      result.put("granted", true);
+                      JSObject result =
+                              new JSObject();
+
+                      result.put(
+                              "granted",
+                              true
+                      );
+
                       call.resolve(result);
 
                   } else {
+
                       requestPermissions(
-                              new String[]{androidPermission},
-                              "permissionCallback"
+                              call,
+                              new String[]{
+                                      androidPermission
+                              }
                       );
-                      call.save();
                   }
               }
 
               @PermissionCallback
-              private void permissionCallback(PluginCall call) {
-                  String permission = call.getString("permission");
+              private void permissionCallback(
+                      PluginCall call
+              ) {
+
+                  String permission =
+                          call.getString("permission");
 
                   String androidPermission = null;
 
                   if ("RECORD_AUDIO".equals(permission)) {
-                      androidPermission = Manifest.permission.RECORD_AUDIO;
 
-                  } else if ("READ_CONTACTS".equals(permission)) {
-                      androidPermission = Manifest.permission.READ_CONTACTS;
+                      androidPermission =
+                              Manifest.permission.RECORD_AUDIO;
 
-                  } else if ("CALL_PHONE".equals(permission)) {
-                      androidPermission = Manifest.permission.CALL_PHONE;
+                  } else if (
+                          "READ_CONTACTS".equals(permission)
+                  ) {
 
-                  } else if ("SEND_SMS".equals(permission)) {
-                      androidPermission = Manifest.permission.SEND_SMS;
+                      androidPermission =
+                              Manifest.permission.READ_CONTACTS;
 
-                  } else if ("POST_NOTIFICATIONS".equals(permission)
-                          && Build.VERSION.SDK_INT >= 33) {
+                  } else if (
+                          "CALL_PHONE".equals(permission)
+                  ) {
+
+                      androidPermission =
+                              Manifest.permission.CALL_PHONE;
+
+                  } else if (
+                          "SEND_SMS".equals(permission)
+                  ) {
+
+                      androidPermission =
+                              Manifest.permission.SEND_SMS;
+
+                  } else if (
+                          "POST_NOTIFICATIONS".equals(permission)
+                          && Build.VERSION.SDK_INT >= 33
+                  ) {
+
                       androidPermission =
                               Manifest.permission.POST_NOTIFICATIONS;
                   }
 
                   boolean granted =
                           androidPermission != null &&
-                          getContext().checkSelfPermission(androidPermission)
-                          == PackageManager.PERMISSION_GRANTED;
+                          getContext().checkSelfPermission(
+                                  androidPermission
+                          ) == PackageManager.PERMISSION_GRANTED;
 
-                  JSObject result = new JSObject();
-                  result.put("granted", granted);
+                  JSObject result =
+                          new JSObject();
+
+                  result.put(
+                          "granted",
+                          granted
+                  );
+
                   call.resolve(result);
               }
 
               @PluginMethod
               public void call(PluginCall call) {
-                  String phone = call.getString("phone");
 
-                  if (phone == null || phone.trim().isEmpty()) {
-                      call.reject("Phone number is required");
+                  String phone =
+                          call.getString("phone");
+
+                  if (phone == null ||
+                      phone.trim().isEmpty()) {
+
+                      call.reject(
+                              "Phone number is required"
+                      );
+
                       return;
                   }
 
                   if (getContext().checkSelfPermission(
-                          Manifest.permission.CALL_PHONE)
-                          != PackageManager.PERMISSION_GRANTED) {
-                      call.reject("CALL_PHONE permission not granted");
+                          Manifest.permission.CALL_PHONE
+                  ) != PackageManager.PERMISSION_GRANTED) {
+
+                      call.reject(
+                              "CALL_PHONE permission not granted"
+                      );
+
                       return;
                   }
 
                   try {
-                      Intent intent = new Intent(
-                              Intent.ACTION_CALL,
-                              Uri.parse("tel:" + phone)
+
+                      Intent intent =
+                              new Intent(
+                                      Intent.ACTION_CALL,
+                                      Uri.parse(
+                                              "tel:" + phone
+                                      )
+                              );
+
+                      intent.addFlags(
+                              Intent.FLAG_ACTIVITY_NEW_TASK
                       );
 
-                      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-
                       getContext().startActivity(intent);
+
                       call.resolve();
 
                   } catch (Exception e) {
+
                       call.reject(
                               "Unable to make call: " +
                               e.getMessage()
@@ -223,11 +305,20 @@ jobs:
 
               @PluginMethod
               public void sms(PluginCall call) {
-                  String phone = call.getString("phone");
-                  String message = call.getString("message");
 
-                  if (phone == null || phone.trim().isEmpty()) {
-                      call.reject("Phone number is required");
+                  String phone =
+                          call.getString("phone");
+
+                  String message =
+                          call.getString("message");
+
+                  if (phone == null ||
+                      phone.trim().isEmpty()) {
+
+                      call.reject(
+                              "Phone number is required"
+                      );
+
                       return;
                   }
 
@@ -236,13 +327,18 @@ jobs:
                   }
 
                   if (getContext().checkSelfPermission(
-                          Manifest.permission.SEND_SMS)
-                          != PackageManager.PERMISSION_GRANTED) {
-                      call.reject("SEND_SMS permission not granted");
+                          Manifest.permission.SEND_SMS
+                  ) != PackageManager.PERMISSION_GRANTED) {
+
+                      call.reject(
+                              "SEND_SMS permission not granted"
+                      );
+
                       return;
                   }
 
                   try {
+
                       SmsManager smsManager =
                               SmsManager.getDefault();
 
@@ -257,6 +353,7 @@ jobs:
                       call.resolve();
 
                   } catch (Exception e) {
+
                       call.reject(
                               "Unable to send SMS: " +
                               e.getMessage()
@@ -266,16 +363,24 @@ jobs:
 
               @PluginMethod
               public void openApp(PluginCall call) {
+
                   String packageName =
-                          call.getString("packageName");
+                          call.getString(
+                                  "packageName"
+                          );
 
                   if (packageName == null ||
                       packageName.trim().isEmpty()) {
-                      call.reject("Package name is required");
+
+                      call.reject(
+                              "Package name is required"
+                      );
+
                       return;
                   }
 
                   try {
+
                       Intent intent =
                               getContext()
                                       .getPackageManager()
@@ -284,7 +389,11 @@ jobs:
                                       );
 
                       if (intent == null) {
-                          call.reject("App is not installed");
+
+                          call.reject(
+                                  "App is not installed"
+                          );
+
                           return;
                       }
 
@@ -293,9 +402,11 @@ jobs:
                       );
 
                       getContext().startActivity(intent);
+
                       call.resolve();
 
                   } catch (Exception e) {
+
                       call.reject(
                               "Unable to open app: " +
                               e.getMessage()
@@ -304,16 +415,23 @@ jobs:
               }
 
               @PluginMethod
-              public void openAppSettings(PluginCall call) {
+              public void openAppSettings(
+                      PluginCall call
+              ) {
+
                   try {
-                      Intent intent = new Intent(
-                              Settings.ACTION_APPLICATION_DETAILS_SETTINGS
-                      );
+
+                      Intent intent =
+                              new Intent(
+                                      Settings
+                                              .ACTION_APPLICATION_DETAILS_SETTINGS
+                              );
 
                       intent.setData(
                               Uri.parse(
                                       "package:" +
-                                      getContext().getPackageName()
+                                      getContext()
+                                              .getPackageName()
                               )
                       );
 
@@ -322,9 +440,11 @@ jobs:
                       );
 
                       getContext().startActivity(intent);
+
                       call.resolve();
 
                   } catch (Exception e) {
+
                       call.reject(
                               "Unable to open app settings: " +
                               e.getMessage()
@@ -350,11 +470,17 @@ jobs:
           public class MainActivity extends BridgeActivity {
 
               @Override
-              public void onCreate(Bundle savedInstanceState) {
+              public void onCreate(
+                      Bundle savedInstanceState
+              ) {
 
-                  registerPlugin(MyraNativePlugin.class);
+                  registerPlugin(
+                          MyraNativePlugin.class
+                  );
 
-                  super.onCreate(savedInstanceState);
+                  super.onCreate(
+                          savedInstanceState
+                  );
 
                   if (getBridge() != null &&
                       getBridge().getWebView() != null) {
@@ -366,43 +492,51 @@ jobs:
 
                                           @Override
                                           public void onPermissionRequest(
-                                                  final PermissionRequest request) {
+                                                  final PermissionRequest request
+                                          ) {
 
-                                              runOnUiThread(() -> {
+                                              runOnUiThread(
+                                                      () -> {
 
-                                                  boolean microphoneGranted =
-                                                          getApplicationContext()
-                                                                  .checkSelfPermission(
-                                                                          Manifest.permission.RECORD_AUDIO
-                                                                  ) ==
-                                                          PackageManager.PERMISSION_GRANTED;
+                                                          boolean microphoneGranted =
+                                                                  getApplicationContext()
+                                                                          .checkSelfPermission(
+                                                                                  Manifest.permission.RECORD_AUDIO
+                                                                          ) ==
+                                                                  PackageManager.PERMISSION_GRANTED;
 
-                                                  boolean audioRequested =
-                                                          request.getResources() != null;
+                                                          boolean audioRequested =
+                                                                  request.getResources() != null;
 
-                                                  boolean localOrigin =
-                                                          request.getOrigin() != null &&
-                                                          "https://localhost"
-                                                                  .equals(
-                                                                          request.getOrigin()
-                                                                                  .toString()
+                                                          boolean localOrigin =
+                                                                  request.getOrigin() != null &&
+                                                                  (
+                                                                      request.getOrigin()
+                                                                              .toString()
+                                                                              .startsWith(
+                                                                                      "https://localhost"
+                                                                              )
                                                                   );
 
-                                                  if (microphoneGranted &&
-                                                      audioRequested &&
-                                                      localOrigin) {
+                                                          if (
+                                                                  microphoneGranted &&
+                                                                  audioRequested &&
+                                                                  localOrigin
+                                                          ) {
 
-                                                      request.grant(
-                                                              new String[]{
-                                                                      PermissionRequest
-                                                                              .RESOURCE_AUDIO_CAPTURE
-                                                              }
-                                                      );
+                                                              request.grant(
+                                                                      new String[]{
+                                                                              PermissionRequest
+                                                                                      .RESOURCE_AUDIO_CAPTURE
+                                                                      }
+                                                              );
 
-                                                  } else {
-                                                      request.deny();
-                                                  }
-                                              });
+                                                          } else {
+
+                                                              request.deny();
+                                                          }
+                                                      }
+                                              );
                                           }
                                       }
                               );
