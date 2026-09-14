@@ -34,6 +34,41 @@ jobs:
       - name: Add Android platform
         run: npx cap add android
 
+      - name: Add MYRA permissions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          text = manifest.read_text()
+
+          permissions = [
+              "android.permission.RECORD_AUDIO",
+              "android.permission.CALL_PHONE",
+              "android.permission.SEND_SMS",
+              "android.permission.READ_SMS",
+              "android.permission.RECEIVE_SMS",
+              "android.permission.POST_NOTIFICATIONS",
+              "android.permission.ACCESS_FINE_LOCATION",
+              "android.permission.ACCESS_COARSE_LOCATION"
+          ]
+
+          additions = "\n".join(
+              f'    <uses-permission android:name="{p}" />'
+              for p in permissions
+              if f'android.permission.{p.split(".")[-1]}' not in text
+          )
+
+          if additions:
+              text = text.replace(
+                  "<application",
+                  additions + "\n    <application",
+                  1
+              )
+
+          manifest.write_text(text)
+          PY
+
       - name: Sync Capacitor
         run: npx cap sync android
 
