@@ -1,5 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 
+const GEMINI_URL =
+  "https://generativelanguage.googleapis.com/v1beta/interactions";
+
 function App() {
   const [message, setMessage] = useState("");
 
@@ -11,6 +14,7 @@ function App() {
   ]);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
+
   const [apiKey, setApiKey] = useState(
     () => localStorage.getItem("myra_gemini_key") || ""
   );
@@ -21,6 +25,7 @@ function App() {
 
   const [wakeWord, setWakeWord] = useState(false);
   const [listening, setListening] = useState(false);
+  const [thinking, setThinking] = useState(false);
 
   const [animePosition, setAnimePosition] = useState(() => {
     try {
@@ -30,6 +35,10 @@ function App() {
       return { x: 20, y: 20 };
     }
   });
+
+  const [lastInteractionId, setLastInteractionId] = useState(
+    () => localStorage.getItem("myra_interaction_id") || ""
+  );
 
   const chatRef = useRef(null);
   const animeRef = useRef(null);
@@ -54,29 +63,28 @@ function App() {
     );
   }, [animePosition]);
 
+  useEffect(() => {
+    if (lastInteractionId) {
+      localStorage.setItem(
+        "myra_interaction_id",
+        lastInteractionId
+      );
+    } else {
+      localStorage.removeItem("myra_interaction_id");
+    }
+  }, [lastInteractionId]);
+
   /* =========================
-     SEND MESSAGE
+     AUTO SCROLL
   ========================= */
 
-  const sendMessage = () => {
-    const text = message.trim();
+  useEffect(() => {
+    const box = chatRef.current?.querySelector(".chat-box");
 
-    if (!text) return;
-
-    setMessages((prev) => [
-      ...prev,
-      {
-        sender: "user",
-        text,
-      },
-      {
-        sender: "myra",
-        text: "I'm Myra. I'm ready to help you! 🤖✨",
-      },
-    ]);
-
-    setMessage("");
-  };
+    if (box) {
+      box.scrollTop = box.scrollHeight;
+    }
+  }, [messages, thinking]);
 
   /* =========================
      VOICE
@@ -84,7 +92,6 @@ function App() {
 
   const speak = (text) => {
     if (!window.speechSynthesis) {
-      alert("Voice preview is not supported on this device.");
       return;
     }
 
@@ -94,25 +101,184 @@ function App() {
 
     const voices = window.speechSynthesis.getVoices();
 
-    const femaleVoice =
-      voices.find((v) =>
-        /female|zira|samantha|victoria|google us english/i.test(
-          v.name
-        )
-      ) || voices[0];
+    let selectedVoice = null;
 
-    if (femaleVoice) {
-      utterance.voice = femaleVoice;
+    if (voice === "female-1") {
+      selectedVoice =
+        voices.find((v) =>
+          /samantha|zira|google.*female|female/i.test(v.name)
+        ) || voices[0];
+    }
+
+    if (voice === "female-2") {
+      selectedVoice =
+        voices.find((v) =>
+          /victoria|karen|moira/i.test(v.name)
+        ) || voices[1] || voices[0];
+    }
+
+    if (voice === "female-3") {
+      selectedVoice =
+        voices.find((v) =>
+          /susan|hazel|aria/i.test(v.name)
+        ) || voices[2] || voices[0];
+    }
+
+    if (voice === "female-4") {
+      selectedVoice =
+        voices.find((v) =>
+          /google.*uk|google.*us|english/i.test(v.name)
+        ) || voices[3] || voices[0];
+    }
+
+    if (selectedVoice) {
+      utterance.voice = selectedVoice;
     }
 
     utterance.rate = 0.95;
-    utterance.pitch = 1.15;
+    utterance.pitch = 1.12;
+    utterance.volume = 1;
 
     window.speechSynthesis.speak(utterance);
   };
 
   const previewVoice = () => {
     speak("Hello! I am Myra. Your AI assistant.");
+  };
+
+  /* =========================
+     GEMINI API
+  ========================= */
+
+  const askGemini = async (text) => {
+    if (!apiKey.trim()) {
+      throw new Error(
+        "Gemini API key is missing. Open Settings and add your API key."
+      );
+    }
+
+    const body = {
+      model: "gemini-3.8-flash",
+      input: text,
+      generation_config: {
+        thinking_level: "low",
+      },
+      system_instruction:
+        "You are MYRA, a friendly futuristic AI assistant. " +
+        "Give clear, useful and concise answers. " +
+        "You can understand Bangla, Banglish and English. " +
+        "If the user speaks Bangla or Banglish, reply naturally in the same style.",
+    };
+
+    if (lastInteractionId) {
+      body.previous_interaction_id = lastInteractionId;
+    }
+
+    const response = await fetch(GEMINI_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey.trim(),
+      },
+      body: JSON.stringify(body),
+    });
+
+    let data = {};
+
+    try {
+      data = await response.json();
+    } catch {
+      throw new Error("Gemini returned an invalid response.");
+    }
+
+    if (!response.ok) {
+      const errorMessage =
+        data?.error?.message ||
+        `Gemini API error (${response.status})`;
+
+      throw new Error(errorMessage);
+    }
+
+    const answer =
+      data?.output_text ||
+      data?.steps
+        ?.flatMap((step) => step.content || [])
+        ?.filter((item) => item.type === "text")
+        ?.map((item) => item.text)
+        ?.join("\n") ||
+      "I couldn't generate a response.";
+
+    if (data?.id) {
+      setLastInteractionId(data.id);
+    }
+
+    return answer;
+  };
+
+  /* =========================
+     SEND MESSAGE
+  ========================= */
+
+  const sendMessage = async () => {
+    const text = message.trim();
+
+    if (!text || thinking) return;
+
+    setMessage("");
+
+    setMessages((prev) => [
+      ...prev,
+      {
+        sender: "user",
+        text,
+      },
+    ]);
+
+    setThinking(true);
+
+    try {
+      const answer = await askGemini(text);
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          sender: "myra",
+          text: answer,
+        },
+      ]);
+
+      speak(answer);
+    } catch (error) {
+      const errorText =
+        error?.message ||
+        "Something went wrong while connecting to Gemini.";
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          sender: "myra",
+          text: `⚠️ ${errorText}`,
+        },
+      ]);
+    } finally {
+      setThinking(false);
+    }
+  };
+
+  /* =========================
+     NEW CHAT
+  ========================= */
+
+  const newChat = () => {
+    setMessages([
+      {
+        sender: "myra",
+        text: "New conversation started 🌸 How can I help you?",
+      },
+    ]);
+
+    setLastInteractionId("");
+    window.speechSynthesis?.cancel();
   };
 
   /* =========================
@@ -126,7 +292,7 @@ function App() {
 
     if (!SpeechRecognition) {
       alert(
-        "Speech recognition is not available in this browser/device."
+        "Speech recognition is not available on this device."
       );
       return;
     }
@@ -141,7 +307,7 @@ function App() {
 
     recognition.onresult = (event) => {
       const result =
-        event.results[0][0].transcript;
+        event.results?.[0]?.[0]?.transcript || "";
 
       setMessage(result);
 
@@ -158,11 +324,15 @@ function App() {
       setListening(false);
     };
 
-    recognition.start();
+    try {
+      recognition.start();
+    } catch {
+      setListening(false);
+    }
   };
 
   /* =========================
-     ANIME CREATOR DRAG
+     ANIME DRAG
   ========================= */
 
   const startAnimeDrag = (event) => {
@@ -177,10 +347,8 @@ function App() {
       animeRef.current.getBoundingClientRect();
 
     dragData.current = {
-      startX:
-        event.clientX || event.touches?.[0]?.clientX,
-      startY:
-        event.clientY || event.touches?.[0]?.clientY,
+      startX: event.clientX,
+      startY: event.clientY,
 
       originalX: animeRect.left - chatRect.left,
       originalY: animeRect.top - chatRect.top,
@@ -208,22 +376,23 @@ function App() {
 
     const data = dragData.current;
 
-    const currentX = event.clientX;
-    const currentY = event.clientY;
-
     let newX =
       data.originalX +
-      (currentX - data.startX);
+      (event.clientX - data.startX);
 
     let newY =
       data.originalY +
-      (currentY - data.startY);
+      (event.clientY - data.startY);
 
     const maxX =
-      data.chatWidth - data.animeWidth - 10;
+      data.chatWidth -
+      data.animeWidth -
+      10;
 
     const maxY =
-      data.chatHeight - data.animeHeight - 10;
+      data.chatHeight -
+      data.animeHeight -
+      10;
 
     newX = Math.max(10, Math.min(newX, maxX));
     newY = Math.max(10, Math.min(newY, maxY));
@@ -247,10 +416,6 @@ function App() {
       stopAnimeDrag
     );
   };
-
-  /* =========================
-     ANIME RESET
-  ========================= */
 
   const resetAnimePosition = () => {
     setAnimePosition({
@@ -279,7 +444,7 @@ function App() {
 
   const openAppSettings = () => {
     alert(
-      "Android system permission settings will be connected here when the native MYRA Android bridge is added."
+      "Android App Info connection will be added in the native Android update."
     );
   };
 
@@ -289,16 +454,16 @@ function App() {
 
   const googleLogin = () => {
     alert(
-      "Google Sign-In setup will be connected after Firebase/Google configuration."
+      "Google Sign-In will be connected through the native Firebase Android setup."
     );
   };
 
+  /* =========================
+     UI
+  ========================= */
+
   return (
     <div className="app">
-
-      {/* =========================
-          TOP BAR
-      ========================= */}
 
       <header className="top-bar">
 
@@ -315,20 +480,13 @@ function App() {
           className="settings"
           type="button"
           onClick={() => setSettingsOpen(true)}
-          aria-label="Settings"
         >
           ⚙️
         </button>
 
       </header>
 
-      {/* =========================
-          MAIN
-      ========================= */}
-
       <main className="main-content">
-
-        {/* MYRA */}
 
         <section className="myra-section">
 
@@ -341,16 +499,14 @@ function App() {
           <h1>Myra</h1>
 
           <p>
-            {listening
+            {thinking
+              ? "Thinking..."
+              : listening
               ? "Listening..."
               : "I'm listening..."}
           </p>
 
         </section>
-
-        {/* =========================
-            CHAT
-        ========================= */}
 
         <section
           className="chat-section"
@@ -365,7 +521,7 @@ function App() {
               </div>
 
               <div className="chat-subtitle">
-                AI Assistant • Voice Ready
+                Gemini AI • Voice Ready
               </div>
             </div>
 
@@ -384,11 +540,15 @@ function App() {
               </div>
             ))}
 
+            {thinking && (
+              <div className="message myra">
+                <span>MYRA is thinking...</span>
+              </div>
+            )}
+
           </div>
 
-          {/* =========================
-              DRAGGABLE ANIME CREATOR
-          ========================= */}
+          {/* ANIME CREATOR */}
 
           <div
             ref={animeRef}
@@ -434,7 +594,9 @@ function App() {
               <button
                 type="button"
                 onClick={() =>
-                  alert("Anime style options coming soon.")
+                  alert(
+                    "Anime customization will be added in the next update."
+                  )
                 }
               >
                 STYLE
@@ -451,21 +613,28 @@ function App() {
 
           </div>
 
-          {/* =========================
-              INPUT
-          ========================= */}
+          {/* INPUT */}
 
           <div className="input-area">
 
             <input
               type="text"
-              placeholder="Ask Myra anything..."
+              placeholder={
+                thinking
+                  ? "MYRA is thinking..."
+                  : "Ask Myra anything..."
+              }
               value={message}
+              disabled={thinking}
               onChange={(e) =>
                 setMessage(e.target.value)
               }
               onKeyDown={(e) => {
-                if (e.key === "Enter") {
+                if (
+                  e.key === "Enter" &&
+                  !e.shiftKey
+                ) {
+                  e.preventDefault();
                   sendMessage();
                 }
               }}
@@ -477,7 +646,7 @@ function App() {
               }`}
               type="button"
               onClick={startListening}
-              aria-label="Microphone"
+              disabled={thinking}
             >
               🎤
             </button>
@@ -486,7 +655,7 @@ function App() {
               className="send-button"
               type="button"
               onClick={sendMessage}
-              aria-label="Send message"
+              disabled={thinking}
             >
               ➤
             </button>
@@ -497,18 +666,14 @@ function App() {
 
       </main>
 
-      {/* =========================
-          SETTINGS
-      ========================= */}
+      {/* SETTINGS */}
 
       {settingsOpen && (
 
         <div
           className="settings-overlay"
           onClick={(e) => {
-            if (
-              e.target === e.currentTarget
-            ) {
+            if (e.target === e.currentTarget) {
               setSettingsOpen(false);
             }
           }}
@@ -539,8 +704,8 @@ function App() {
               <h3>🔑 Gemini API</h3>
 
               <p>
-                Enter your own Gemini API key.
-                It is stored locally on this device.
+                Add your Gemini API key to enable
+                real AI responses.
               </p>
 
               <input
@@ -551,6 +716,20 @@ function App() {
                   setApiKey(e.target.value)
                 }
               />
+
+              <button
+                className="setting-button"
+                type="button"
+                onClick={() =>
+                  alert(
+                    apiKey
+                      ? "Gemini API key saved on this device."
+                      : "Please enter a Gemini API key."
+                  )
+                }
+              >
+                💾 Save API Key
+              </button>
 
             </div>
 
@@ -607,8 +786,8 @@ function App() {
 
               <p>
                 Foreground voice activation.
-                Full background wake-word support
-                will require the native Android layer.
+                Background wake-word will be added
+                through the native Android layer.
               </p>
 
               <div className="wake-toggle">
@@ -637,8 +816,8 @@ function App() {
               <h3>🔐 Google Sign-In</h3>
 
               <p>
-                Google account login will be connected
-                through Firebase.
+                Native Google Sign-In will be
+                connected through Firebase.
               </p>
 
               <button
@@ -655,11 +834,11 @@ function App() {
 
             <div className="setting-card">
 
-              <h3>📱 Permissions Center</h3>
+              <h3>📱 Permissions</h3>
 
               <p>
-                Allow the permissions MYRA needs.
-                Android may show its own permission screen.
+                Android system permissions will be
+                connected in the native Android update.
               </p>
 
               <div className="permission-row">
@@ -688,11 +867,11 @@ function App() {
 
                 <div>
                   <div className="permission-name">
-                    📞 Phone
+                    📱 Android App Info
                   </div>
 
                   <div className="permission-status">
-                    For call actions
+                    Native settings connection
                   </div>
                 </div>
 
@@ -706,27 +885,21 @@ function App() {
 
               </div>
 
-              <div className="permission-row">
+            </div>
 
-                <div>
-                  <div className="permission-name">
-                    📂 Apps
-                  </div>
+            {/* NEW CHAT */}
 
-                  <div className="permission-status">
-                    For app commands
-                  </div>
-                </div>
+            <div className="setting-card">
 
-                <button
-                  className="permission-button"
-                  type="button"
-                  onClick={openAppSettings}
-                >
-                  Settings
-                </button>
+              <h3>🧹 Conversation</h3>
 
-              </div>
+              <button
+                className="setting-button"
+                type="button"
+                onClick={newChat}
+              >
+                Start New Chat
+              </button>
 
             </div>
 
