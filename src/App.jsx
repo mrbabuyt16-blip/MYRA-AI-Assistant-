@@ -1,6 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
+import { registerPlugin } from "@capacitor/core";
 
 const GEMINI_MODEL = "gemini-3.6-flash";
+
+const MyraNative = registerPlugin("MyraNative");
 
 function App() {
   const [tab, setTab] = useState("home");
@@ -47,30 +50,72 @@ function App() {
     };
   }, []);
 
+  // =========================
+  // MICROPHONE PERMISSION
+  // =========================
+
   const requestMicrophonePermission = async () => {
     try {
+      // First ask Android native permission.
+      try {
+        const nativeResult =
+          await MyraNative.requestPermission({
+            permission: "RECORD_AUDIO",
+          });
+
+        if (nativeResult?.granted === false) {
+          alert(
+            "Microphone permission is not allowed.\n\n" +
+              "Open Android Settings → Apps → MYRA AI → Permissions → Microphone → Allow."
+          );
+
+          return false;
+        }
+      } catch (nativeError) {
+        console.warn(
+          "Native microphone permission check:",
+          nativeError
+        );
+      }
+
+      // Then allow the Android WebView to access microphone.
       if (!navigator.mediaDevices?.getUserMedia) {
-        alert("Microphone is not supported on this device.");
+        alert(
+          "Microphone is not supported on this device."
+        );
+
         return false;
       }
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-      });
+      const stream =
+        await navigator.mediaDevices.getUserMedia({
+          audio: true,
+        });
 
-      stream.getTracks().forEach((track) => track.stop());
+      stream.getTracks().forEach((track) => {
+        track.stop();
+      });
 
       return true;
     } catch (error) {
-      console.error("Microphone permission error:", error);
+      console.error(
+        "Microphone permission error:",
+        error
+      );
 
       alert(
-        "Microphone permission is required.\n\nPlease allow Microphone permission from Android App Info."
+        "Microphone access is blocked.\n\n" +
+          "Open Android Settings → Apps → MYRA AI → Permissions → Microphone → Allow.\n\n" +
+          "Then open MYRA AI again."
       );
 
       return false;
     }
   };
+
+  // =========================
+  // NOTIFICATION PERMISSION
+  // =========================
 
   const requestNotificationPermission = async () => {
     try {
@@ -83,16 +128,26 @@ function App() {
       }
 
       if (Notification.permission === "default") {
-        const result = await Notification.requestPermission();
+        const result =
+          await Notification.requestPermission();
+
         return result === "granted";
       }
 
       return false;
     } catch (error) {
-      console.error("Notification permission error:", error);
+      console.error(
+        "Notification permission error:",
+        error
+      );
+
       return false;
     }
   };
+
+  // =========================
+  // GEMINI
+  // =========================
 
   const saveApiKey = () => {
     const key = apiKey.trim();
@@ -100,19 +155,30 @@ function App() {
     if (!key) {
       localStorage.removeItem("myra_gemini_key");
       setConnected(false);
+
       alert("Please paste your Gemini API key.");
+
       return;
     }
 
-    localStorage.setItem("myra_gemini_key", key);
+    localStorage.setItem(
+      "myra_gemini_key",
+      key
+    );
+
     setApiKey(key);
     setConnected(true);
 
-    alert("Gemini API key saved successfully.");
+    alert(
+      "Gemini API key saved successfully."
+    );
   };
 
   const disconnectApi = () => {
-    localStorage.removeItem("myra_gemini_key");
+    localStorage.removeItem(
+      "myra_gemini_key"
+    );
+
     setApiKey("");
     setConnected(false);
 
@@ -120,32 +186,62 @@ function App() {
   };
 
   const getGeminiUrl = () => {
-    return `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+    return (
+      `https://generativelanguage.googleapis.com/v1beta/models/` +
+      `${GEMINI_MODEL}:generateContent`
+    );
   };
 
+  // =========================
+  // VOICE REPLY
+  // =========================
+
   const speak = (text) => {
-    if (!voice || !("speechSynthesis" in window)) {
+    if (
+      !voice ||
+      !("speechSynthesis" in window)
+    ) {
       return;
     }
 
     try {
       window.speechSynthesis.cancel();
 
-      const utterance = new SpeechSynthesisUtterance(text);
+      const utterance =
+        new SpeechSynthesisUtterance(text);
 
       utterance.lang =
-        language === "Bangla" ? "bn-BD" : "en-US";
+        language === "Bangla"
+          ? "bn-BD"
+          : "en-US";
 
       utterance.rate = 0.95;
       utterance.pitch = 1;
 
-      window.speechSynthesis.speak(utterance);
+      window.speechSynthesis.speak(
+        utterance
+      );
     } catch (error) {
-      console.error("Speech error:", error);
+      console.error(
+        "Speech error:",
+        error
+      );
     }
   };
 
+  // =========================
+  // VOICE INPUT
+  // =========================
+
   const startListening = async () => {
+    if (listening) {
+      try {
+        recognitionRef.current?.stop();
+      } catch (e) {}
+
+      return;
+    }
+
     const microphoneAllowed =
       await requestMicrophonePermission();
 
@@ -161,6 +257,7 @@ function App() {
       alert(
         "Voice recognition is not supported on this device."
       );
+
       return;
     }
 
@@ -171,10 +268,13 @@ function App() {
         } catch (e) {}
       }
 
-      const recognition = new SpeechRecognition();
+      const recognition =
+        new SpeechRecognition();
 
       recognition.lang =
-        language === "Bangla" ? "bn-BD" : "en-US";
+        language === "Bangla"
+          ? "bn-BD"
+          : "en-US";
 
       recognition.continuous = false;
       recognition.interimResults = false;
@@ -186,7 +286,8 @@ function App() {
 
       recognition.onresult = (event) => {
         const text =
-          event?.results?.[0]?.[0]?.transcript || "";
+          event?.results?.[0]?.[0]
+            ?.transcript || "";
 
         if (text.trim()) {
           setInput(text.trim());
@@ -205,9 +306,13 @@ function App() {
 
         setListening(false);
 
-        if (event.error === "not-allowed") {
+        if (
+          event.error === "not-allowed" ||
+          event.error === "service-not-allowed"
+        ) {
           alert(
-            "Microphone permission was denied. Please allow Microphone permission from Android App Info."
+            "Microphone permission is blocked.\n\n" +
+              "Open Android Settings → Apps → MYRA AI → Permissions → Microphone → Allow."
           );
         }
       };
@@ -220,45 +325,75 @@ function App() {
         });
       };
 
-      recognitionRef.current = recognition;
+      recognitionRef.current =
+        recognition;
+
       recognition.start();
     } catch (error) {
-      console.error(error);
+      console.error(
+        "Voice start error:",
+        error
+      );
+
       setListening(false);
     }
   };
 
+  // =========================
+  // CALL
+  // =========================
+
   const makeCall = (number) => {
-    const cleanNumber = String(number || "").replace(
-      /[^0-9+]/g,
-      ""
-    );
+    const cleanNumber = String(
+      number || ""
+    ).replace(/[^0-9+]/g, "");
 
     if (!cleanNumber) {
-      alert("Please provide a valid phone number.");
+      alert(
+        "Please provide a valid phone number."
+      );
+
       return;
     }
 
     window.location.href =
-      `tel:${encodeURIComponent(cleanNumber)}`;
+      `tel:${encodeURIComponent(
+        cleanNumber
+      )}`;
   };
 
-  const openSms = (number, body = "") => {
-    const cleanNumber = String(number || "").replace(
-      /[^0-9+]/g,
-      ""
-    );
+  // =========================
+  // SMS
+  // =========================
+
+  const openSms = (
+    number,
+    body = ""
+  ) => {
+    const cleanNumber = String(
+      number || ""
+    ).replace(/[^0-9+]/g, "");
 
     if (!cleanNumber) {
-      alert("Please provide a valid phone number.");
+      alert(
+        "Please provide a valid phone number."
+      );
+
       return;
     }
 
-    const encodedBody = encodeURIComponent(body);
+    const encodedBody =
+      encodeURIComponent(body);
 
     window.location.href =
-      `sms:${encodeURIComponent(cleanNumber)}?body=${encodedBody}`;
+      `sms:${encodeURIComponent(
+        cleanNumber
+      )}?body=${encodedBody}`;
   };
+
+  // =========================
+  // MESSAGES
+  // =========================
 
   const addUser = (text) => {
     setMessages((prev) => [
@@ -282,23 +417,37 @@ function App() {
     speak(text);
   };
 
-  const processCommand = (command) => {
-    const text = command.trim();
-    const lower = text.toLowerCase();
+  // =========================
+  // COMMAND PROCESSOR
+  // =========================
 
+  const processCommand = (
+    command
+  ) => {
+    const text =
+      command.trim();
+
+    const lower =
+      text.toLowerCase();
+
+    // CALL
     if (
       lower.startsWith("call ") ||
       lower.startsWith("কল ") ||
       lower.startsWith("phone ") ||
       lower.startsWith("ফোন ")
     ) {
-      const number = text.replace(
-        /^(call|কল|phone|ফোন)\s*/i,
-        ""
-      );
+      const number =
+        text.replace(
+          /^(call|কল|phone|ফোন)\s*/i,
+          ""
+        );
 
-      if (/[0-9+]{6,}/.test(number)) {
+      if (
+        /[0-9+]{6,}/.test(number)
+      ) {
         makeCall(number);
+
         addAssistant(
           "Opening the phone dialer for you."
         );
@@ -311,6 +460,7 @@ function App() {
       return true;
     }
 
+    // SMS
     if (
       lower.startsWith("sms ") ||
       lower.startsWith("send sms ") ||
@@ -328,9 +478,17 @@ function App() {
     return false;
   };
 
-  const sendMessage = async (customText = null) => {
+  // =========================
+  // SEND MESSAGE
+  // =========================
+
+  const sendMessage = async (
+    customText = null
+  ) => {
     const text = (
-      customText !== null ? customText : input
+      customText !== null
+        ? customText
+        : input
     ).trim();
 
     if (!text || thinking) {
@@ -338,19 +496,24 @@ function App() {
     }
 
     setInput("");
+
     addUser(text);
 
-    const handled = processCommand(text);
+    const handled =
+      processCommand(text);
 
     if (handled) {
       requestAnimationFrame(() => {
         inputRef.current?.focus();
       });
+
       return;
     }
 
     const key =
-      localStorage.getItem("myra_gemini_key") ||
+      localStorage.getItem(
+        "myra_gemini_key"
+      ) ||
       apiKey.trim();
 
     if (!key) {
@@ -376,52 +539,63 @@ function App() {
         },
       ];
 
-      const contents = recentMessages
-        .slice(-12)
-        .map((message) => ({
-          role:
-            message.role === "user"
-              ? "user"
-              : "model",
-          parts: [
-            {
-              text: message.text,
-            },
-          ],
-        }));
+      const contents =
+        recentMessages
+          .slice(-12)
+          .map((message) => ({
+            role:
+              message.role === "user"
+                ? "user"
+                : "model",
 
-      const response = await fetch(
-        `${getGeminiUrl()}?key=${encodeURIComponent(key)}`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            systemInstruction: {
-              parts: [
-                {
-                  text:
-                    "You are MYRA, a helpful AI assistant. " +
-                    "If the user speaks Bangla, reply naturally in Bangla. " +
-                    "If the user speaks English, reply naturally in English. " +
-                    "Be friendly, useful and concise unless more detail is requested.",
-                },
-              ],
+            parts: [
+              {
+                text: message.text,
+              },
+            ],
+          }));
+
+      const response =
+        await fetch(
+          `${getGeminiUrl()}?key=${encodeURIComponent(
+            key
+          )}`,
+          {
+            method: "POST",
+
+            headers: {
+              "Content-Type":
+                "application/json",
             },
-            contents,
-            generationConfig: {
-              temperature: 0.7,
-              maxOutputTokens: 1200,
-            },
-          }),
-        }
-      );
+
+            body: JSON.stringify({
+              systemInstruction: {
+                parts: [
+                  {
+                    text:
+                      "You are MYRA, a helpful AI assistant. " +
+                      "If the user speaks Bangla, reply naturally in Bangla. " +
+                      "If the user speaks English, reply naturally in English. " +
+                      "Be friendly, useful and concise unless more detail is requested.",
+                  },
+                ],
+              },
+
+              contents,
+
+              generationConfig: {
+                temperature: 0.7,
+                maxOutputTokens: 1200,
+              },
+            }),
+          }
+        );
 
       let data;
 
       try {
-        data = await response.json();
+        data =
+          await response.json();
       } catch (error) {
         throw new Error(
           `HTTP ${response.status}`
@@ -436,8 +610,12 @@ function App() {
       }
 
       const answer =
-        data?.candidates?.[0]?.content?.parts
-          ?.map((part) => part.text || "")
+        data?.candidates?.[0]
+          ?.content?.parts
+          ?.map(
+            (part) =>
+              part.text || ""
+          )
           .join("")
           .trim();
 
@@ -448,13 +626,18 @@ function App() {
       }
 
       setConnected(true);
+
       addAssistant(answer);
     } catch (error) {
-      console.error("Gemini error:", error);
+      console.error(
+        "Gemini error:",
+        error
+      );
 
       addAssistant(
         `Gemini connection failed.\n\n${
-          error?.message || "Unknown error."
+          error?.message ||
+          "Unknown error."
         }\n\nCheck your API key, internet connection and Gemini API access.`
       );
     } finally {
@@ -466,17 +649,21 @@ function App() {
     }
   };
 
+  // =========================
+  // QUICK ASK
+  // =========================
+
   const quickAsk = (text) => {
     setTab("chat");
 
     setTimeout(() => {
       sendMessage(text);
-
-      requestAnimationFrame(() => {
-        inputRef.current?.focus();
-      });
     }, 50);
   };
+
+  // =========================
+  // NAVIGATION
+  // =========================
 
   const goHome = () => {
     setSettingsPage(false);
@@ -486,16 +673,16 @@ function App() {
   const goChat = () => {
     setSettingsPage(false);
     setTab("chat");
-
-    requestAnimationFrame(() => {
-      inputRef.current?.focus();
-    });
   };
 
   const goSettings = () => {
     setSettingsPage(true);
     setTab("settings");
   };
+
+  // =========================
+  // SETTINGS
+  // =========================
 
   const Settings = () => (
     <div className="screen settings-screen">
@@ -522,6 +709,7 @@ function App() {
           Customize your MYRA AI assistant
         </p>
 
+        {/* GEMINI */}
         <div className="setting-card">
           <div className="setting-title">
             Gemini AI
@@ -536,7 +724,9 @@ function App() {
             type="password"
             value={apiKey}
             onChange={(e) =>
-              setApiKey(e.target.value)
+              setApiKey(
+                e.target.value
+              )
             }
             placeholder="Paste Gemini API key"
             autoComplete="off"
@@ -550,6 +740,7 @@ function App() {
                   : "status-off"
               }
             />
+
             {connected
               ? "Gemini connected"
               : "Gemini not connected"}
@@ -565,34 +756,43 @@ function App() {
           {connected && (
             <button
               className="disconnect-button"
-              onClick={disconnectApi}
+              onClick={
+                disconnectApi
+              }
             >
               Disconnect
             </button>
           )}
         </div>
 
+        {/* VOICE */}
         <div className="setting-card">
           <div className="setting-title">
             🎤 Voice
           </div>
 
           <div className="toggle-card">
-            <span>Voice replies</span>
+            <span>
+              Voice replies
+            </span>
 
             <label className="switch">
               <input
                 type="checkbox"
                 checked={voice}
                 onChange={(e) =>
-                  setVoice(e.target.checked)
+                  setVoice(
+                    e.target.checked
+                  )
                 }
               />
+
               <span />
             </label>
           </div>
         </div>
 
+        {/* LANGUAGE */}
         <div className="setting-card">
           <div className="setting-title">
             🌐 Language
@@ -606,7 +806,9 @@ function App() {
                   : ""
               }
               onClick={() =>
-                setLanguage("English")
+                setLanguage(
+                  "English"
+                )
               }
             >
               English
@@ -619,7 +821,9 @@ function App() {
                   : ""
               }
               onClick={() =>
-                setLanguage("Bangla")
+                setLanguage(
+                  "Bangla"
+                )
               }
             >
               বাংলা
@@ -627,6 +831,7 @@ function App() {
           </div>
         </div>
 
+        {/* APP INFO */}
         <div className="setting-card">
           <div className="setting-title">
             📱 MYRA AI
@@ -643,6 +848,10 @@ function App() {
       </div>
     </div>
   );
+
+  // =========================
+  // HOME
+  // =========================
 
   const Home = () => (
     <div className="screen">
@@ -721,7 +930,9 @@ function App() {
 
         <button
           className="command-action"
-          onClick={startListening}
+          onClick={
+            startListening
+          }
         >
           🎤
           <span>Voice</span>
@@ -729,26 +940,35 @@ function App() {
       </div>
 
       <div className="compact-chat">
-        {messages.slice(-4).map(
-          (message, index) => (
-            <div
-              key={index}
-              className={
-                message.role === "user"
-                  ? "mini-message user-mini"
-                  : "mini-message ai-mini"
-              }
-            >
-              <span>
-                {message.role === "user"
-                  ? "You"
-                  : "Myra"}
-              </span>
+        {messages
+          .slice(-4)
+          .map(
+            (
+              message,
+              index
+            ) => (
+              <div
+                key={index}
+                className={
+                  message.role ===
+                  "user"
+                    ? "mini-message user-mini"
+                    : "mini-message ai-mini"
+                }
+              >
+                <span>
+                  {message.role ===
+                  "user"
+                    ? "You"
+                    : "Myra"}
+                </span>
 
-              <p>{message.text}</p>
-            </div>
-          )
-        )}
+                <p>
+                  {message.text}
+                </p>
+              </div>
+            )
+          )}
       </div>
 
       <div className="voice-control">
@@ -758,9 +978,13 @@ function App() {
               ? "voice-button listening"
               : "voice-button"
           }
-          onClick={startListening}
+          onClick={
+            startListening
+          }
         >
-          {listening ? "●" : "🎙️"}
+          {listening
+            ? "●"
+            : "🎙️"}
         </button>
       </div>
 
@@ -769,20 +993,18 @@ function App() {
           ref={inputRef}
           value={input}
           onChange={(e) =>
-            setInput(e.target.value)
+            setInput(
+              e.target.value
+            )
           }
           onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
+            if (
+              e.key === "Enter" &&
+              !e.shiftKey
+            ) {
               e.preventDefault();
               sendMessage();
             }
-          }}
-          onFocus={() => {
-            window.setTimeout(() => {
-              inputRef.current?.scrollIntoView({
-                block: "nearest",
-              });
-            }, 100);
           }}
           placeholder={
             listening
@@ -795,9 +1017,12 @@ function App() {
         />
 
         <button
-          onClick={() => sendMessage()}
+          onClick={() =>
+            sendMessage()
+          }
           disabled={
-            thinking || !input.trim()
+            thinking ||
+            !input.trim()
           }
         >
           ➤
@@ -805,6 +1030,10 @@ function App() {
       </div>
     </div>
   );
+
+  // =========================
+  // CHAT
+  // =========================
 
   const Chat = () => (
     <div className="screen chat-screen">
@@ -832,17 +1061,22 @@ function App() {
 
       <div className="chat-messages">
         {messages.map(
-          (message, index) => (
+          (
+            message,
+            index
+          ) => (
             <div
               key={index}
               className={
-                message.role === "user"
+                message.role ===
+                "user"
                   ? "chat-bubble user-bubble"
                   : "chat-bubble ai-bubble"
               }
             >
               <div className="bubble-name">
-                {message.role === "user"
+                {message.role ===
+                "user"
                   ? "You"
                   : "Myra"}
               </div>
@@ -864,7 +1098,9 @@ function App() {
       <div className="text-input-wrap chat-input">
         <button
           className="mic-mini"
-          onClick={startListening}
+          onClick={
+            startListening
+          }
         >
           🎤
         </button>
@@ -873,20 +1109,18 @@ function App() {
           ref={inputRef}
           value={input}
           onChange={(e) =>
-            setInput(e.target.value)
+            setInput(
+              e.target.value
+            )
           }
           onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
+            if (
+              e.key === "Enter" &&
+              !e.shiftKey
+            ) {
               e.preventDefault();
               sendMessage();
             }
-          }}
-          onFocus={() => {
-            window.setTimeout(() => {
-              inputRef.current?.scrollIntoView({
-                block: "nearest",
-              });
-            }, 100);
           }}
           placeholder={
             listening
@@ -899,9 +1133,12 @@ function App() {
         />
 
         <button
-          onClick={() => sendMessage()}
+          onClick={() =>
+            sendMessage()
+          }
           disabled={
-            thinking || !input.trim()
+            thinking ||
+            !input.trim()
           }
         >
           ➤
@@ -909,6 +1146,10 @@ function App() {
       </div>
     </div>
   );
+
+  // =========================
+  // SETTINGS SCREEN
+  // =========================
 
   if (settingsPage) {
     return (
@@ -920,6 +1161,10 @@ function App() {
     );
   }
 
+  // =========================
+  // MAIN APP
+  // =========================
+
   return (
     <div className="myra-app">
       <div className="app-shell">
@@ -929,6 +1174,7 @@ function App() {
           <Home />
         )}
 
+        {/* NEW BOTTOM NAVIGATION */}
         <nav className="bottom-nav">
           <button
             className={
@@ -939,8 +1185,13 @@ function App() {
             onClick={goHome}
             aria-label="Home"
           >
-            <span className="nav-icon">⌂</span>
-            <span>Home</span>
+            <span className="nav-icon">
+              ⌂
+            </span>
+
+            <span>
+              Home
+            </span>
           </button>
 
           <button
@@ -952,8 +1203,13 @@ function App() {
             onClick={goChat}
             aria-label="Chat"
           >
-            <span className="nav-icon">◉</span>
-            <span>Chat</span>
+            <span className="nav-icon">
+              ◉
+            </span>
+
+            <span>
+              Chat
+            </span>
           </button>
 
           <button
@@ -962,11 +1218,18 @@ function App() {
                 ? "active"
                 : ""
             }
-            onClick={goSettings}
+            onClick={
+              goSettings
+            }
             aria-label="Settings"
           >
-            <span className="nav-icon">⚙</span>
-            <span>Settings</span>
+            <span className="nav-icon">
+              ⚙
+            </span>
+
+            <span>
+              Settings
+            </span>
           </button>
         </nav>
       </div>
