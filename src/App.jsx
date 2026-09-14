@@ -25,11 +25,154 @@ function App() {
     () => Boolean(localStorage.getItem("myra_gemini_key"))
   );
 
-  const [voice, setVoice] = useState(true);
-  const [language, setLanguage] = useState("English");
+  const [voice, setVoice] = useState(
+    () => localStorage.getItem("myra_voice_enabled") !== "false"
+  );
+
+  const [language, setLanguage] = useState(
+    () => localStorage.getItem("myra_language") || "English"
+  );
+
+  const [ttsVoices, setTtsVoices] = useState([]);
+  const [selectedVoiceName, setSelectedVoiceName] = useState(
+    () => localStorage.getItem("myra_selected_voice") || ""
+  );
+
+  const [previewingVoice, setPreviewingVoice] = useState("");
 
   const inputRef = useRef(null);
   const recognitionRef = useRef(null);
+
+  // -------------------------
+  // LOAD FEMALE VOICES
+  // -------------------------
+
+  const loadVoices = () => {
+    if (!("speechSynthesis" in window)) {
+      setTtsVoices([]);
+      return;
+    }
+
+    const voices = window.speechSynthesis.getVoices();
+
+    const englishVoices = voices.filter((v) =>
+      /^en(-|_)/i.test(v.lang || "")
+    );
+
+    const banglaVoices = voices.filter((v) =>
+      /^bn(-|_)/i.test(v.lang || "")
+    );
+
+    const preferredFemaleNames = [
+      "female",
+      "woman",
+      "zira",
+      "samantha",
+      "karen",
+      "moira",
+      "susan",
+      "ava",
+      "allison",
+      "victoria",
+      "google us english",
+      "google uk english female",
+      "microsoft zira",
+      "microsoft aria",
+      "microsoft jenny",
+      "microsoft sara",
+      "microsoft ana",
+    ];
+
+    const femaleDetected = voices.filter((v) => {
+      const name = (v.name || "").toLowerCase();
+
+      return preferredFemaleNames.some((keyword) =>
+        name.includes(keyword)
+      );
+    });
+
+    let candidates = [
+      ...femaleDetected,
+      ...englishVoices,
+      ...banglaVoices,
+    ];
+
+    const unique = [];
+    const seen = new Set();
+
+    for (const v of candidates) {
+      const key = `${v.name}__${v.lang}`;
+
+      if (!seen.has(key)) {
+        seen.add(key);
+        unique.push(v);
+      }
+    }
+
+    // Remove voices that are obviously male if their names identify them.
+    const maleNames = [
+      "david",
+      "mark",
+      "george",
+      "daniel",
+      "james",
+      "alex",
+      "fred",
+      "thomas",
+      "richard",
+    ];
+
+    const filtered = unique.filter((v) => {
+      const name = (v.name || "").toLowerCase();
+
+      return !maleNames.some((male) =>
+        name === male || name.includes(` ${male}`)
+      );
+    });
+
+    setTtsVoices(filtered.slice(0, 7));
+  };
+
+  useEffect(() => {
+    loadVoices();
+
+    if ("speechSynthesis" in window) {
+      window.speechSynthesis.onvoiceschanged = loadVoices;
+    }
+
+    return () => {
+      if ("speechSynthesis" in window) {
+        window.speechSynthesis.onvoiceschanged = null;
+      }
+    };
+  }, []);
+
+  // -------------------------
+  // SAVE SETTINGS
+  // -------------------------
+
+  useEffect(() => {
+    localStorage.setItem(
+      "myra_voice_enabled",
+      String(voice)
+    );
+  }, [voice]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      "myra_language",
+      language
+    );
+  }, [language]);
+
+  useEffect(() => {
+    if (selectedVoiceName) {
+      localStorage.setItem(
+        "myra_selected_voice",
+        selectedVoiceName
+      );
+    }
+  }, [selectedVoiceName]);
 
   // -------------------------
   // CLEANUP
@@ -118,6 +261,28 @@ function App() {
   };
 
   // -------------------------
+  // GET SELECTED VOICE
+  // -------------------------
+
+  const getSelectedVoice = () => {
+    if (!("speechSynthesis" in window)) {
+      return null;
+    }
+
+    const voices = window.speechSynthesis.getVoices();
+
+    if (!selectedVoiceName) {
+      return null;
+    }
+
+    return (
+      voices.find(
+        (v) => v.name === selectedVoiceName
+      ) || null
+    );
+  };
+
+  // -------------------------
   // SPEAK
   // -------------------------
 
@@ -140,8 +305,23 @@ function App() {
           ? "bn-BD"
           : "en-US";
 
+      const selected = getSelectedVoice();
+
+      if (selected) {
+        utterance.voice = selected;
+        utterance.lang = selected.lang;
+      }
+
       utterance.rate = 0.95;
       utterance.pitch = 1;
+
+      utterance.onend = () => {
+        setPreviewingVoice("");
+      };
+
+      utterance.onerror = () => {
+        setPreviewingVoice("");
+      };
 
       window.speechSynthesis.speak(
         utterance
@@ -152,6 +332,97 @@ function App() {
         error
       );
     }
+  };
+
+  // -------------------------
+  // PREVIEW VOICE
+  // -------------------------
+
+  const previewVoice = (voiceItem, index) => {
+    if (!("speechSynthesis" in window)) {
+      alert(
+        "Text-to-speech is not supported on this device."
+      );
+      return;
+    }
+
+    try {
+      window.speechSynthesis.cancel();
+
+      setPreviewingVoice(
+        voiceItem.name
+      );
+
+      const utterance =
+        new SpeechSynthesisUtterance(
+          language === "Bangla"
+            ? "হ্যালো, আমি মাইরা।"
+            : "Hello, I'm Myra. How can I help you?"
+        );
+
+      utterance.voice = voiceItem;
+      utterance.lang = voiceItem.lang;
+      utterance.rate = 0.95;
+      utterance.pitch = 1;
+
+      utterance.onend = () => {
+        setPreviewingVoice("");
+      };
+
+      utterance.onerror = () => {
+        setPreviewingVoice("");
+      };
+
+      window.speechSynthesis.speak(
+        utterance
+      );
+    } catch (error) {
+      console.error(
+        "Voice preview error:",
+        error
+      );
+
+      setPreviewingVoice("");
+    }
+  };
+
+  // -------------------------
+  // SELECT VOICE
+  // -------------------------
+
+  const selectVoice = (voiceItem) => {
+    try {
+      window.speechSynthesis?.cancel();
+    } catch (e) {}
+
+    setSelectedVoiceName(
+      voiceItem.name
+    );
+
+    const testText =
+      language === "Bangla"
+        ? "হ্যালো, আমি মাইরা।"
+        : "Hello, I'm Myra.";
+
+    try {
+      const utterance =
+        new SpeechSynthesisUtterance(
+          testText
+        );
+
+      utterance.voice = voiceItem;
+      utterance.lang = voiceItem.lang;
+      utterance.rate = 0.95;
+      utterance.pitch = 1;
+
+      window.speechSynthesis.speak(
+        utterance
+      );
+    } catch (e) {}
+
+    alert(
+      `MYRA voice selected:\n${voiceItem.name}`
+    );
   };
 
   // -------------------------
@@ -520,7 +791,6 @@ function App() {
       );
     } finally {
       setThinking(false);
-
       focusInput();
     }
   };
@@ -670,7 +940,9 @@ function App() {
           onClick={startListening}
         >
           🎤
-          <span>Voice</span>
+          <span>
+            {listening ? "Listening" : "Voice"}
+          </span>
         </button>
       </div>
 
@@ -893,6 +1165,8 @@ function App() {
           Customize your MYRA AI assistant
         </p>
 
+        {/* GEMINI */}
+
         <div className="setting-card">
           <div className="setting-title">
             Gemini AI
@@ -944,6 +1218,8 @@ function App() {
           )}
         </div>
 
+        {/* VOICE ON/OFF */}
+
         <div className="setting-card">
           <div className="setting-title">
             🎤 Voice
@@ -969,6 +1245,110 @@ function App() {
             </label>
           </div>
         </div>
+
+        {/* WOMAN VOICES */}
+
+        <div className="setting-card">
+          <div className="setting-title">
+            👩 Woman Voice
+          </div>
+
+          <div className="setting-description">
+            Choose the voice MYRA will use for spoken replies.
+          </div>
+
+          {ttsVoices.length === 0 ? (
+            <div className="note">
+              No compatible text-to-speech voices were found.
+              Please install or enable a female voice in your
+              Android Text-to-Speech settings.
+            </div>
+          ) : (
+            <div className="voice-list">
+              {ttsVoices.map(
+                (voiceItem, index) => {
+                  const selected =
+                    selectedVoiceName ===
+                    voiceItem.name;
+
+                  const previewing =
+                    previewingVoice ===
+                    voiceItem.name;
+
+                  return (
+                    <div
+                      key={`${voiceItem.name}-${voiceItem.lang}-${index}`}
+                      className={
+                        selected
+                          ? "voice-option selected"
+                          : "voice-option"
+                      }
+                    >
+                      <div className="voice-info">
+                        <div className="voice-number">
+                          {index + 1}
+                        </div>
+
+                        <div>
+                          <div className="voice-name">
+                            Woman Voice {index + 1}
+                          </div>
+
+                          <div className="voice-language">
+                            {voiceItem.lang} •{" "}
+                            {voiceItem.name}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="voice-actions">
+                        <button
+                          className="preview-button"
+                          onClick={() =>
+                            previewVoice(
+                              voiceItem,
+                              index
+                            )
+                          }
+                        >
+                          {previewing
+                            ? "■"
+                            : "▶"}
+                        </button>
+
+                        <button
+                          className={
+                            selected
+                              ? "select-button selected"
+                              : "select-button"
+                          }
+                          onClick={() =>
+                            selectVoice(
+                              voiceItem
+                            )
+                          }
+                        >
+                          {selected
+                            ? "Selected"
+                            : "Select"}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+              )}
+            </div>
+          )}
+
+          <button
+            className="connect-button"
+            onClick={loadVoices}
+          >
+            🔄 Refresh Voices
+          </button>
+        </div>
+
+        {/* LANGUAGE */}
 
         <div className="setting-card">
           <div className="setting-title">
@@ -1007,6 +1387,8 @@ function App() {
             </button>
           </div>
         </div>
+
+        {/* APP INFO */}
 
         <div className="setting-card">
           <div className="setting-title">
