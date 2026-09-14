@@ -147,9 +147,9 @@ jobs:
                               androidPermission =
                                       Manifest.permission.POST_NOTIFICATIONS;
                           } else {
-                              JSObject oldResult = new JSObject();
-                              oldResult.put("granted", true);
-                              call.resolve(oldResult);
+                              JSObject resultOld = new JSObject();
+                              resultOld.put("granted", true);
+                              call.resolve(resultOld);
                               return;
                           }
 
@@ -201,9 +201,11 @@ jobs:
                       );
 
                       getContext().startActivity(intent);
+
                       call.resolve();
 
                   } catch (Exception e) {
+
                       call.reject(
                               "Unable to make call: " +
                               e.getMessage()
@@ -252,6 +254,7 @@ jobs:
                       call.resolve();
 
                   } catch (Exception e) {
+
                       call.reject(
                               "Unable to send SMS: " +
                               e.getMessage()
@@ -294,9 +297,11 @@ jobs:
                       );
 
                       getContext().startActivity(intent);
+
                       call.resolve();
 
                   } catch (Exception e) {
+
                       call.reject(
                               "Unable to open app: " +
                               e.getMessage()
@@ -305,13 +310,17 @@ jobs:
               }
 
               @PluginMethod
-              public void openAppSettings(PluginCall call) {
+              public void openAppSettings(
+                      PluginCall call
+              ) {
 
                   try {
 
-                      Intent intent = new Intent(
-                              Settings.ACTION_APPLICATION_DETAILS_SETTINGS
-                      );
+                      Intent intent =
+                              new Intent(
+                                      Settings
+                                              .ACTION_APPLICATION_DETAILS_SETTINGS
+                              );
 
                       intent.setData(
                               Uri.parse(
@@ -326,9 +335,11 @@ jobs:
                       );
 
                       getContext().startActivity(intent);
+
                       call.resolve();
 
                   } catch (Exception e) {
+
                       call.reject(
                               "Unable to open app settings: " +
                               e.getMessage()
@@ -350,7 +361,10 @@ jobs:
           import android.app.Service;
           import android.content.Intent;
           import android.os.Build;
+          import android.os.Bundle;
+          import android.os.Handler;
           import android.os.IBinder;
+          import android.os.Looper;
           import android.speech.RecognitionListener;
           import android.speech.RecognizerIntent;
           import android.speech.SpeechRecognizer;
@@ -363,9 +377,16 @@ jobs:
               private static final String CHANNEL_ID =
                       "myra_wake_channel";
 
+              private static final int NOTIFICATION_ID = 1001;
+
               private SpeechRecognizer recognizer;
 
               private boolean running = true;
+
+              private final Handler handler =
+                      new Handler(
+                              Looper.getMainLooper()
+                      );
 
               @Override
               public void onCreate() {
@@ -379,7 +400,7 @@ jobs:
                   if (Build.VERSION.SDK_INT >= 29) {
 
                       startForeground(
-                              1001,
+                              NOTIFICATION_ID,
                               notification,
                               android.content.pm.ServiceInfo
                                       .FOREGROUND_SERVICE_TYPE_MICROPHONE
@@ -388,7 +409,7 @@ jobs:
                   } else {
 
                       startForeground(
-                              1001,
+                              NOTIFICATION_ID,
                               notification
                       );
                   }
@@ -397,6 +418,10 @@ jobs:
               }
 
               private void startRecognition() {
+
+                  if (!running) {
+                      return;
+                  }
 
                   if (!SpeechRecognizer.isRecognitionAvailable(
                           getApplicationContext()
@@ -408,12 +433,14 @@ jobs:
 
                       if (recognizer != null) {
                           recognizer.destroy();
+                          recognizer = null;
                       }
 
                       recognizer =
-                              SpeechRecognizer.createSpeechRecognizer(
-                                      getApplicationContext()
-                              );
+                              SpeechRecognizer
+                                      .createSpeechRecognizer(
+                                              getApplicationContext()
+                                      );
 
                       recognizer.setRecognitionListener(
                               new RecognitionListener() {
@@ -433,6 +460,10 @@ jobs:
 
                                           for (String result :
                                                   matches) {
+
+                                              if (result == null) {
+                                                  continue;
+                                              }
 
                                               String text =
                                                       result
@@ -469,7 +500,7 @@ jobs:
 
                                   @Override
                                   public void onReadyForSpeech(
-                                          android.os.Bundle params
+                                          Bundle params
                                   ) {}
 
                                   @Override
@@ -490,13 +521,13 @@ jobs:
 
                                   @Override
                                   public void onPartialResults(
-                                          android.os.Bundle partialResults
+                                          Bundle partialResults
                                   ) {}
 
                                   @Override
                                   public void onEvent(
                                           int eventType,
-                                          android.os.Bundle params
+                                          Bundle params
                                   ) {}
                               }
                       );
@@ -527,6 +558,7 @@ jobs:
                       recognizer.startListening(intent);
 
                   } catch (Exception e) {
+
                       restartRecognition();
                   }
               }
@@ -537,11 +569,9 @@ jobs:
                       return;
                   }
 
-                  new android.os.Handler(
-                          android.os.Looper.getMainLooper()
-                  ).postDelayed(
+                  handler.postDelayed(
                           this::startRecognition,
-                          1200
+                          1500
                   );
               }
 
@@ -645,6 +675,10 @@ jobs:
 
                   running = false;
 
+                  handler.removeCallbacksAndMessages(
+                          null
+                  );
+
                   if (recognizer != null) {
                       recognizer.destroy();
                       recognizer = null;
@@ -746,27 +780,37 @@ jobs:
                       )
                   ) {
 
-                      getWindow()
-                              .getDecorView()
-                              .postDelayed(
-                                      () -> {
+                      if (
+                          getBridge() != null &&
+                          getBridge().getWebView() != null
+                      ) {
 
-                                          if (getBridge() != null &&
-                                              getBridge().getWebView() != null) {
+                          getBridge()
+                                  .getWebView()
+                                  .postDelayed(
+                                          () -> {
 
-                                              getBridge()
-                                                      .getWebView()
-                                                      .evaluateJavascript(
-                                                              "window.dispatchEvent(new Event('myra-wake'));",
-                                                              null
-                                                      );
-                                          }
+                                              if (
+                                                  getBridge() != null &&
+                                                  getBridge().getWebView() != null
+                                              ) {
 
-                                      },
-                                      900
-                              );
+                                                  getBridge()
+                                                          .getWebView()
+                                                          .evaluateJavascript(
+                                                                  "window.dispatchEvent(new Event('myra-wake'));",
+                                                                  null
+                                                          );
+                                              }
 
-                      intent.removeExtra("MYRA_WAKE");
+                                          },
+                                          900
+                                  );
+                      }
+
+                      intent.removeExtra(
+                              "MYRA_WAKE"
+                      );
                   }
               }
           }
