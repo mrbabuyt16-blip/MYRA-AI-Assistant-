@@ -1,4 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
+import { registerPlugin } from "@capacitor/core";
+
+const MyraNative = registerPlugin("MyraNative");
 
 const GEMINI_MODEL = "gemini-3.8-flash";
 const GEMINI_URL =
@@ -17,6 +20,193 @@ function loadJSON(key, fallback) {
     return fallback;
   }
 }
+
+/* ---------------- NATIVE HELPERS ---------------- */
+
+async function nativeCall(phone) {
+  try {
+    return await MyraNative.call({ phone });
+  } catch (error) {
+    console.error("MYRA call:", error);
+    throw error;
+  }
+}
+
+async function nativeSms(phone, message) {
+  try {
+    return await MyraNative.sms({ phone, message });
+  } catch (error) {
+    console.error("MYRA SMS:", error);
+    throw error;
+  }
+}
+
+async function nativeOpenApp(packageName) {
+  try {
+    return await MyraNative.openApp({ packageName });
+  } catch (error) {
+    console.error("MYRA app open:", error);
+    throw error;
+  }
+}
+
+async function requestNativePermission(permission) {
+  try {
+    return await MyraNative.requestPermission({ permission });
+  } catch (error) {
+    console.error("Permission:", error);
+    throw error;
+  }
+}
+
+async function openAndroidSettings() {
+  try {
+    return await MyraNative.openAppSettings();
+  } catch (error) {
+    console.error("Android settings:", error);
+    throw error;
+  }
+}
+
+/* ---------------- COMMAND HELPERS ---------------- */
+
+function normalizeCommand(text) {
+  return text
+    .toLowerCase()
+    .replace(/[।?!,]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function detectAppCommand(text) {
+  const command = normalizeCommand(text);
+
+  const apps = [
+    {
+      names: ["youtube", "ইউটিউব"],
+      packageName: "com.google.android.youtube",
+      title: "YouTube",
+    },
+    {
+      names: ["chrome", "google chrome", "ক্রোম"],
+      packageName: "com.android.chrome",
+      title: "Chrome",
+    },
+    {
+      names: ["facebook", "ফেসবুক"],
+      packageName: "com.facebook.katana",
+      title: "Facebook",
+    },
+    {
+      names: ["messenger", "মেসেঞ্জার"],
+      packageName: "com.facebook.orca",
+      title: "Messenger",
+    },
+    {
+      names: ["instagram", "ইনস্টাগ্রাম"],
+      packageName: "com.instagram.android",
+      title: "Instagram",
+    },
+    {
+      names: ["whatsapp", "হোয়াটসঅ্যাপ", "হোয়াটসঅ্যাপ"],
+      packageName: "com.whatsapp",
+      title: "WhatsApp",
+    },
+    {
+      names: ["settings", "setting", "সেটিংস"],
+      packageName: "com.android.settings",
+      title: "Settings",
+    },
+  ];
+
+  const openWords = [
+    "open",
+    "খোলো",
+    "খুলে দাও",
+    "চালু কর",
+    "চালু করো",
+    "open কর",
+    "open করো",
+  ];
+
+  const hasOpenWord = openWords.some((word) => command.includes(word));
+
+  if (!hasOpenWord) return null;
+
+  return (
+    apps.find((app) =>
+      app.names.some((name) => command.includes(name))
+    ) || null
+  );
+}
+
+function detectCallCommand(text) {
+  const command = normalizeCommand(text);
+
+  const callWords = [
+    "call ",
+    "call কর",
+    "call করো",
+    "কল কর",
+    "কল করো",
+    "ফোন কর",
+    "ফোন করো",
+  ];
+
+  const isCall = callWords.some((word) => command.includes(word));
+
+  if (!isCall) return null;
+
+  const cleaned = command
+    .replace("call", "")
+    .replace("কল", "")
+    .replace("ফোন", "")
+    .replace("করো", "")
+    .replace("কর", "")
+    .replace("দাও", "")
+    .replace("দাও", "")
+    .trim();
+
+  if (!cleaned) {
+    return {
+      name: "",
+      phone: "",
+    };
+  }
+
+  return {
+    name: cleaned,
+    phone: "",
+  };
+}
+
+function detectSmsCommand(text) {
+  const command = normalizeCommand(text);
+
+  const smsWords = [
+    "sms",
+    "send sms",
+    "message",
+    "মেসেজ",
+    "এসএমএস",
+    "মেসেজ পাঠাও",
+    "মেসেজ পাঠিয়ে দাও",
+    "মেসেজ পাঠিয়ে দাও",
+  ];
+
+  const isSms = smsWords.some((word) => command.includes(word));
+
+  if (!isSms) return null;
+
+  return {
+    raw: text,
+    name: "",
+    phone: "",
+    message: text,
+  };
+}
+
+/* ---------------- APP ---------------- */
 
 export default function App() {
   const [tab, setTab] = useState("myra");
@@ -82,8 +272,20 @@ export default function App() {
     localStorage.getItem("myra_last_interaction") || ""
   );
 
+  const [pendingAction, setPendingAction] = useState(null);
+
+  const [permissionStatus, setPermissionStatus] = useState({
+    microphone: false,
+    contacts: false,
+    phone: false,
+    sms: false,
+    notifications: false,
+  });
+
   const recognitionRef = useRef(null);
   const messagesEndRef = useRef(null);
+
+  /* ---------------- STORAGE ---------------- */
 
   useEffect(() => {
     localStorage.setItem("myra_messages", JSON.stringify(messages));
@@ -130,8 +332,12 @@ export default function App() {
   }, [animeName]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    messagesEndRef.current?.scrollIntoView({
+      behavior: "smooth",
+    });
   }, [messages, thinking]);
+
+  /* ---------------- VOICE ---------------- */
 
   const speak = (text) => {
     if (!voiceEnabled || !window.speechSynthesis) return;
@@ -139,12 +345,162 @@ export default function App() {
     window.speechSynthesis.cancel();
 
     const utterance = new SpeechSynthesisUtterance(text);
+
     utterance.rate = 1;
     utterance.pitch = 1;
     utterance.volume = 1;
 
+    if (language === "Bangla") {
+      utterance.lang = "bn-BD";
+    } else if (language === "English") {
+      utterance.lang = "en-US";
+    } else {
+      utterance.lang = navigator.language || "en-US";
+    }
+
     window.speechSynthesis.speak(utterance);
   };
+
+  /* ---------------- DEVICE COMMANDS ---------------- */
+
+  const runCall = async (phone, name = "") => {
+    if (!phone) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          text:
+            "I need the contact's phone number before I can make the call.",
+        },
+      ]);
+      return;
+    }
+
+    try {
+      await nativeCall(phone);
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          text: `Calling ${name || phone}...`,
+        },
+      ]);
+
+      speak(`Calling ${name || "the contact"}.`);
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          text:
+            "I couldn't start the call. Please check Phone permission.",
+        },
+      ]);
+    }
+  };
+
+  const runSms = async (phone, message, name = "") => {
+    if (!phone || !message) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          text:
+            "I need both the recipient and the message before sending an SMS.",
+        },
+      ]);
+      return;
+    }
+
+    try {
+      await nativeSms(phone, message);
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          text: `SMS sent to ${name || phone}.`,
+        },
+      ]);
+
+      speak("SMS sent successfully.");
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          text:
+            "I couldn't send the SMS. Please check SMS permission.",
+        },
+      ]);
+    }
+  };
+
+  const runOpenApp = async (app) => {
+    if (!app) return;
+
+    try {
+      await nativeOpenApp(app.packageName);
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          text: `Opening ${app.title}...`,
+        },
+      ]);
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          text:
+            `${app.title} could not be opened. Make sure the app is installed.`,
+        },
+      ]);
+    }
+  };
+
+  /* ---------------- COMMAND PROCESSOR ---------------- */
+
+  const processDeviceCommand = async (text) => {
+    const appCommand = detectAppCommand(text);
+
+    if (appCommand) {
+      await runOpenApp(appCommand);
+      return true;
+    }
+
+    const callCommand = detectCallCommand(text);
+
+    if (callCommand) {
+      setPendingAction({
+        type: "call",
+        name: callCommand.name,
+        phone: callCommand.phone,
+      });
+
+      return true;
+    }
+
+    const smsCommand = detectSmsCommand(text);
+
+    if (smsCommand) {
+      setPendingAction({
+        type: "sms",
+        name: smsCommand.name,
+        phone: smsCommand.phone,
+        message: smsCommand.message,
+      });
+
+      return true;
+    }
+
+    return false;
+  };
+
+  /* ---------------- GEMINI ---------------- */
 
   const sendMessage = async (customText) => {
     const text = (customText ?? input).trim();
@@ -163,6 +519,13 @@ export default function App() {
     };
 
     setMessages((prev) => [...prev, userMessage]);
+
+    const handled = await processDeviceCommand(text);
+
+    if (handled) {
+      return;
+    }
+
     setThinking(true);
 
     if (!apiKey) {
@@ -219,7 +582,8 @@ export default function App() {
 
       if (!response.ok) {
         throw new Error(
-          data?.error?.message || `Gemini request failed (${response.status})`
+          data?.error?.message ||
+            `Gemini request failed (${response.status})`
         );
       }
 
@@ -266,16 +630,20 @@ export default function App() {
     }
   };
 
+  /* ---------------- SPEECH RECOGNITION ---------------- */
+
   const startVoice = () => {
     const SpeechRecognition =
-      window.SpeechRecognition || window.webkitSpeechRecognition;
+      window.SpeechRecognition ||
+      window.webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
       setMessages((prev) => [
         ...prev,
         {
           role: "assistant",
-          text: "Voice recognition is not supported on this device/browser.",
+          text:
+            "Voice recognition is not supported on this device/browser.",
         },
       ]);
       return;
@@ -304,9 +672,12 @@ export default function App() {
     };
 
     recognition.onresult = (event) => {
-      const transcript = event.results[0][0].transcript;
+      const transcript =
+        event.results[0][0].transcript;
+
       setInput(transcript);
       setListening(false);
+
       sendMessage(transcript);
     };
 
@@ -319,8 +690,54 @@ export default function App() {
     };
 
     recognitionRef.current = recognition;
-    recognition.start();
+
+    try {
+      recognition.start();
+    } catch {
+      setListening(false);
+    }
   };
+
+  /* ---------------- PERMISSIONS ---------------- */
+
+  const askPermission = async (type) => {
+    const map = {
+      microphone: "RECORD_AUDIO",
+      contacts: "READ_CONTACTS",
+      phone: "CALL_PHONE",
+      sms: "SEND_SMS",
+      notifications: "POST_NOTIFICATIONS",
+    };
+
+    const permission = map[type];
+
+    if (!permission) return;
+
+    try {
+      await requestNativePermission(permission);
+
+      setPermissionStatus((prev) => ({
+        ...prev,
+        [type]: true,
+      }));
+    } catch {
+      alert(
+        `MYRA could not request ${type} permission. Please open Android App Info → Permissions.`
+      );
+    }
+  };
+
+  const openAppPermissions = async () => {
+    try {
+      await openAndroidSettings();
+    } catch {
+      alert(
+        "Please open Android Settings → Apps → MYRA AI → Permissions manually."
+      );
+    }
+  };
+
+  /* ---------------- OTHER FUNCTIONS ---------------- */
 
   const newChat = () => {
     setMessages([
@@ -331,11 +748,14 @@ export default function App() {
     ]);
 
     setLastInteractionId("");
+
     localStorage.removeItem("myra_last_interaction");
   };
 
   const addMemory = () => {
-    const value = window.prompt("What should MYRA remember?");
+    const value = window.prompt(
+      "What should MYRA remember?"
+    );
 
     if (!value?.trim()) return;
 
@@ -350,27 +770,36 @@ export default function App() {
   };
 
   const deleteMemory = (id) => {
-    setMemories((prev) => prev.filter((item) => item.id !== id));
+    setMemories((prev) =>
+      prev.filter((item) => item.id !== id)
+    );
   };
 
   const toggleTask = (id) => {
     setTasks((prev) =>
       prev.map((task) =>
-        task.id === id ? { ...task, done: !task.done } : task
+        task.id === id
+          ? { ...task, done: !task.done }
+          : task
       )
     );
   };
 
   const exportMemory = () => {
-    const blob = new Blob([JSON.stringify(memories, null, 2)], {
-      type: "application/json",
-    });
+    const blob = new Blob(
+      [JSON.stringify(memories, null, 2)],
+      {
+        type: "application/json",
+      }
+    );
 
     const url = URL.createObjectURL(blob);
+
     const a = document.createElement("a");
 
     a.href = url;
     a.download = "myra-memory.json";
+
     a.click();
 
     URL.revokeObjectURL(url);
@@ -385,14 +814,19 @@ export default function App() {
 
     reader.onload = () => {
       try {
-        const imported = JSON.parse(reader.result);
+        const imported = JSON.parse(
+          reader.result
+        );
 
         if (!Array.isArray(imported)) {
           throw new Error("Invalid memory file");
         }
 
         setMemories(imported);
-        alert("MYRA memory imported successfully.");
+
+        alert(
+          "MYRA memory imported successfully."
+        );
       } catch {
         alert("Invalid memory JSON file.");
       }
@@ -402,7 +836,12 @@ export default function App() {
   };
 
   const clearHistory = () => {
-    if (!window.confirm("Delete all MYRA conversation history?")) return;
+    if (
+      !window.confirm(
+        "Delete all MYRA conversation history?"
+      )
+    )
+      return;
 
     setHistory([]);
   };
@@ -412,10 +851,13 @@ export default function App() {
     setSettingsPage(null);
   };
 
+  /* ---------------- HEADER ---------------- */
+
   const renderHeader = (title, back = false) => (
     <header className="myra-header">
       <div className="brand-small">
         <div className="brand-dot" />
+
         <div>
           <strong>{title}</strong>
           <span>MYRA AI</span>
@@ -423,16 +865,24 @@ export default function App() {
       </div>
 
       {back ? (
-        <button className="icon-btn" onClick={() => setSettingsPage(null)}>
+        <button
+          className="icon-btn"
+          onClick={() => setSettingsPage(null)}
+        >
           ←
         </button>
       ) : (
-        <button className="icon-btn" onClick={openSettings}>
+        <button
+          className="icon-btn"
+          onClick={openSettings}
+        >
           ⚙
         </button>
       )}
     </header>
   );
+
+  /* ---------------- MYRA HOME ---------------- */
 
   const renderMyra = () => (
     <section className="screen myra-screen">
@@ -440,9 +890,9 @@ export default function App() {
 
       <div className="hero-area">
         <div
-          className={`myra-orb ${listening ? "orb-listening" : ""} ${
-            thinking ? "orb-thinking" : ""
-          }`}
+          className={`myra-orb ${
+            listening ? "orb-listening" : ""
+          } ${thinking ? "orb-thinking" : ""}`}
         >
           <div className="orb-ring ring-one" />
           <div className="orb-ring ring-two" />
@@ -455,6 +905,7 @@ export default function App() {
 
         <div className="greeting">
           <h1>Good Evening.</h1>
+
           <p>
             {listening
               ? "I'm listening..."
@@ -466,37 +917,111 @@ export default function App() {
       </div>
 
       <div className="quick-row">
-        <button onClick={() => sendMessage("Give me today's brief")}>
+        <button
+          onClick={() =>
+            sendMessage("Give me today's brief")
+          }
+        >
           ✦ Brief
         </button>
 
-        <button onClick={() => sendMessage("What should I focus on today?")}>
+        <button
+          onClick={() =>
+            sendMessage(
+              "What should I focus on today?"
+            )
+          }
+        >
           ◇ Focus
         </button>
 
-        <button onClick={newChat}>＋ New</button>
+        <button onClick={newChat}>
+          ＋ New
+        </button>
+      </div>
+
+      <div className="command-actions">
+        <button
+          className="command-action"
+          onClick={() =>
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "assistant",
+                text:
+                  "Call command ready. Say or type: Call [contact name].",
+              },
+            ])
+          }
+        >
+          📞 Call
+        </button>
+
+        <button
+          className="command-action"
+          onClick={() =>
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "assistant",
+                text:
+                  "SMS command ready. Say or type: Send SMS to [contact].",
+              },
+            ])
+          }
+        >
+          💬 SMS
+        </button>
+
+        <button
+          className="command-action"
+          onClick={() =>
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "assistant",
+                text:
+                  "App command ready. Say: Open YouTube, Open Chrome, Open WhatsApp, etc.",
+              },
+            ])
+          }
+        >
+          📱 Apps
+        </button>
       </div>
 
       {messages.length > 1 && (
         <div className="compact-chat">
-          {messages.slice(-4).map((message, index) => (
-            <div
-              key={index}
-              className={`mini-message ${
-                message.role === "user" ? "user-mini" : "ai-mini"
-              }`}
-            >
-              <span>{message.role === "user" ? "YOU" : "MYRA"}</span>
-              <p>{message.text}</p>
-            </div>
-          ))}
+          {messages.slice(-4).map(
+            (message, index) => (
+              <div
+                key={index}
+                className={`mini-message ${
+                  message.role === "user"
+                    ? "user-mini"
+                    : "ai-mini"
+                }`}
+              >
+                <span>
+                  {message.role === "user"
+                    ? "YOU"
+                    : "MYRA"}
+                </span>
+
+                <p>{message.text}</p>
+              </div>
+            )
+          )}
+
           <div ref={messagesEndRef} />
         </div>
       )}
 
       <div className="voice-control">
         <button
-          className={`mic-button ${listening ? "active" : ""}`}
+          className={`mic-button ${
+            listening ? "active" : ""
+          }`}
           onClick={startVoice}
           aria-label="Voice"
         >
@@ -504,21 +1029,31 @@ export default function App() {
         </button>
 
         <span>
-          {listening ? "Listening..." : thinking ? "Thinking..." : "Tap to speak"}
+          {listening
+            ? "Listening..."
+            : thinking
+            ? "Thinking..."
+            : "Tap to speak"}
         </span>
       </div>
 
       <div className="text-input-wrap">
         <input
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={(e) =>
+            setInput(e.target.value)
+          }
           onKeyDown={(e) => {
-            if (e.key === "Enter") sendMessage();
+            if (e.key === "Enter")
+              sendMessage();
           }}
           placeholder="Ask MYRA anything..."
         />
 
-        <button onClick={() => sendMessage()} disabled={thinking}>
+        <button
+          onClick={() => sendMessage()}
+          disabled={thinking}
+        >
           ➤
         </button>
       </div>
@@ -537,23 +1072,37 @@ export default function App() {
 
       {animeOpen && (
         <div className="anime-panel">
-          <div className="anime-avatar">MY</div>
+          <div className="anime-avatar">
+            MY
+          </div>
+
           <div>
             <strong>{animeName}</strong>
             <small>MYRA companion</small>
           </div>
-          <button onClick={() => setAnimeOpen(false)}>×</button>
+
+          <button
+            onClick={() =>
+              setAnimeOpen(false)
+            }
+          >
+            ×
+          </button>
         </div>
       )}
 
       <button
         className="anime-toggle"
-        onClick={() => setAnimeOpen((v) => !v)}
+        onClick={() =>
+          setAnimeOpen((v) => !v)
+        }
       >
         🤖
       </button>
     </section>
   );
+
+  /* ---------------- TODAY ---------------- */
 
   const renderToday = () => {
     const today = new Date();
@@ -564,49 +1113,89 @@ export default function App() {
 
         <div className="page-title">
           <span>MYRA DAILY</span>
+
           <h1>
-            {today.toLocaleDateString(undefined, {
-              weekday: "long",
-            })}
+            {today.toLocaleDateString(
+              undefined,
+              {
+                weekday: "long",
+              }
+            )}
           </h1>
+
           <p>
-            {today.toLocaleDateString(undefined, {
-              day: "numeric",
-              month: "long",
-              year: "numeric",
-            })}
+            {today.toLocaleDateString(
+              undefined,
+              {
+                day: "numeric",
+                month: "long",
+                year: "numeric",
+              }
+            )}
           </p>
         </div>
 
         <div className="today-card featured-card">
-          <span className="card-label">MYRA BRIEF</span>
+          <span className="card-label">
+            MYRA BRIEF
+          </span>
+
           <h2>Stay focused.</h2>
+
           <p>
-            Complete your important tasks first, then give yourself time to
-            relax.
+            Complete your important tasks first,
+            then give yourself time to relax.
           </p>
-          <button onClick={() => sendMessage("Give me my daily brief")}>
+
+          <button
+            onClick={() =>
+              sendMessage(
+                "Give me my daily brief"
+              )
+            }
+          >
             Generate brief →
           </button>
         </div>
 
         <div className="section-head">
           <h2>Tasks</h2>
-          <span>{tasks.filter((x) => !x.done).length} remaining</span>
+
+          <span>
+            {
+              tasks.filter(
+                (x) => !x.done
+              ).length
+            }{" "}
+            remaining
+          </span>
         </div>
 
         <div className="task-list">
           {tasks.map((task) => (
             <button
               key={task.id}
-              className={`task-card ${task.done ? "task-done" : ""}`}
-              onClick={() => toggleTask(task.id)}
+              className={`task-card ${
+                task.done
+                  ? "task-done"
+                  : ""
+              }`}
+              onClick={() =>
+                toggleTask(task.id)
+              }
             >
-              <span className="task-check">{task.done ? "✓" : ""}</span>
+              <span className="task-check">
+                {task.done ? "✓" : ""}
+              </span>
 
               <div>
-                <strong>{task.title}</strong>
-                <small>{task.time}</small>
+                <strong>
+                  {task.title}
+                </strong>
+
+                <small>
+                  {task.time}
+                </small>
               </div>
             </button>
           ))}
@@ -615,10 +1204,17 @@ export default function App() {
     );
   };
 
+  /* ---------------- MEMORY ---------------- */
+
   const renderMemory = () => {
-    const filtered = memories.filter((item) =>
-      item.text.toLowerCase().includes(memorySearch.toLowerCase())
-    );
+    const filtered =
+      memories.filter((item) =>
+        item.text
+          .toLowerCase()
+          .includes(
+            memorySearch.toLowerCase()
+          )
+      );
 
     return (
       <section className="screen">
@@ -626,26 +1222,46 @@ export default function App() {
 
         <div className="page-title">
           <span>MYRA MEMORY</span>
+
           <h1>Your memories.</h1>
-          <p>Things you choose to save stay stored locally on this device.</p>
+
+          <p>
+            Things you choose to save stay
+            stored locally on this device.
+          </p>
         </div>
 
         <div className="search-box">
           🔎
+
           <input
             value={memorySearch}
-            onChange={(e) => setMemorySearch(e.target.value)}
+            onChange={(e) =>
+              setMemorySearch(
+                e.target.value
+              )
+            }
             placeholder="Search memory..."
           />
         </div>
 
         <div className="memory-actions">
-          <button onClick={addMemory}>＋ Add memory</button>
-          <button onClick={exportMemory}>↑ Export</button>
+          <button onClick={addMemory}>
+            ＋ Add memory
+          </button>
+
+          <button onClick={exportMemory}>
+            ↑ Export
+          </button>
 
           <label>
             ↓ Import
-            <input type="file" accept=".json,application/json" onChange={importMemory} />
+
+            <input
+              type="file"
+              accept=".json,application/json"
+              onChange={importMemory}
+            />
           </label>
         </div>
 
@@ -653,18 +1269,41 @@ export default function App() {
           {filtered.length === 0 ? (
             <div className="empty-card">
               <span>◎</span>
-              <strong>No memories yet</strong>
-              <p>Add something you want MYRA to remember.</p>
+
+              <strong>
+                No memories yet
+              </strong>
+
+              <p>
+                Add something you want MYRA
+                to remember.
+              </p>
             </div>
           ) : (
             filtered.map((item) => (
-              <div className="memory-card" key={item.id}>
+              <div
+                className="memory-card"
+                key={item.id}
+              >
                 <div>
-                  <strong>{item.text}</strong>
-                  <small>{item.time}</small>
+                  <strong>
+                    {item.text}
+                  </strong>
+
+                  <small>
+                    {item.time}
+                  </small>
                 </div>
 
-                <button onClick={() => deleteMemory(item.id)}>×</button>
+                <button
+                  onClick={() =>
+                    deleteMemory(
+                      item.id
+                    )
+                  }
+                >
+                  ×
+                </button>
               </div>
             ))
           )}
@@ -673,76 +1312,156 @@ export default function App() {
     );
   };
 
+  /* ---------------- SETTINGS HOME ---------------- */
+
   const renderSettingsHome = () => (
     <section className="screen">
       {renderHeader("Settings")}
 
       <div className="page-title compact-title">
         <span>MYRA CONTROL</span>
+
         <h1>Settings</h1>
       </div>
 
       <div className="settings-list">
-        <button onClick={() => setSettingsPage("key")}>
+        <button
+          onClick={() =>
+            setSettingsPage("key")
+          }
+        >
           <span>⌘</span>
+
           <div>
-            <strong>AI Key & Provider</strong>
-            <small>{apiKey ? "Gemini key configured" : "API key required"}</small>
+            <strong>
+              AI Key & Provider
+            </strong>
+
+            <small>
+              {apiKey
+                ? "Gemini key configured"
+                : "API key required"}
+            </small>
           </div>
+
           <b>›</b>
         </button>
 
-        <button onClick={() => setSettingsPage("memory")}>
+        <button
+          onClick={() =>
+            setSettingsPage("memory")
+          }
+        >
           <span>🧠</span>
+
           <div>
             <strong>Memory</strong>
-            <small>Import, export and local memories</small>
+
+            <small>
+              Import, export and local
+              memories
+            </small>
           </div>
+
           <b>›</b>
         </button>
 
-        <button onClick={() => setSettingsPage("history")}>
+        <button
+          onClick={() =>
+            setSettingsPage("history")
+          }
+        >
           <span>◷</span>
+
           <div>
             <strong>History</strong>
-            <small>{history.length} conversations</small>
+
+            <small>
+              {history.length} conversations
+            </small>
           </div>
+
           <b>›</b>
         </button>
 
-        <button onClick={() => setSettingsPage("language")}>
+        <button
+          onClick={() =>
+            setSettingsPage("language")
+          }
+        >
           <span>文</span>
+
           <div>
             <strong>Language</strong>
+
             <small>{language}</small>
           </div>
+
           <b>›</b>
         </button>
 
-        <button onClick={() => setSettingsPage("voice")}>
+        <button
+          onClick={() =>
+            setSettingsPage("voice")
+          }
+        >
           <span>♫</span>
+
           <div>
-            <strong>Voice & Hey MYRA</strong>
-            <small>{voiceEnabled ? "Voice enabled" : "Voice disabled"}</small>
+            <strong>
+              Voice & Hey MYRA
+            </strong>
+
+            <small>
+              {voiceEnabled
+                ? "Voice enabled"
+                : "Voice disabled"}
+            </small>
           </div>
+
           <b>›</b>
         </button>
 
-        <button onClick={() => setSettingsPage("permissions")}>
+        <button
+          onClick={() =>
+            setSettingsPage(
+              "permissions"
+            )
+          }
+        >
           <span>⌁</span>
+
           <div>
-            <strong>Permissions</strong>
-            <small>Microphone and device access</small>
+            <strong>
+              Permissions
+            </strong>
+
+            <small>
+              Microphone, Contacts,
+              Phone, SMS & Notifications
+            </small>
           </div>
+
           <b>›</b>
         </button>
 
-        <button onClick={() => setSettingsPage("google")}>
+        <button
+          onClick={() =>
+            setSettingsPage("google")
+          }
+        >
           <span>G</span>
+
           <div>
-            <strong>Google Sign-In</strong>
-            <small>Account connection setup</small>
+            <strong>
+              Google Sign-In
+            </strong>
+
+            <small>
+              Account connection setup
+            </small>
           </div>
+
           <b>›</b>
         </button>
       </div>
@@ -754,14 +1473,20 @@ export default function App() {
     </section>
   );
 
+  /* ---------------- AI KEY ---------------- */
+
   const renderKeySettings = () => (
     <section className="screen">
       {renderHeader("AI Key", true)}
 
       <div className="page-title compact-title">
         <span>AI CONNECTION</span>
+
         <h1>AI Key</h1>
-        <p>Connect MYRA to Gemini.</p>
+
+        <p>
+          Connect MYRA to Gemini.
+        </p>
       </div>
 
       <div className="setting-card">
@@ -771,12 +1496,15 @@ export default function App() {
           className="key-input"
           type="password"
           value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
+          onChange={(e) =>
+            setApiKey(e.target.value)
+          }
           placeholder="Paste your Gemini API key"
         />
 
         <small>
-          The key is saved locally in this app for this device.
+          The key is saved locally in this
+          app for this device.
         </small>
       </div>
 
@@ -784,11 +1512,22 @@ export default function App() {
         <label>Provider</label>
 
         <div className="provider-grid">
-          {["Gemini", "OpenAI", "xAI Grok", "OpenRouter"].map((item) => (
+          {[
+            "Gemini",
+            "OpenAI",
+            "xAI Grok",
+            "OpenRouter",
+          ].map((item) => (
             <button
               key={item}
-              className={provider === item ? "selected" : ""}
-              onClick={() => setProvider(item)}
+              className={
+                provider === item
+                  ? "selected"
+                  : ""
+              }
+              onClick={() =>
+                setProvider(item)
+              }
             >
               {item}
             </button>
@@ -797,18 +1536,28 @@ export default function App() {
       </div>
 
       <div className="setting-card">
-        <label>Optional tools</label>
+        <label>
+          Optional tools
+        </label>
 
-        <input placeholder="Tavily API key (optional)" />
-        <input placeholder="Firecrawl API key (optional)" />
+        <input
+          placeholder="Tavily API key (optional)"
+        />
+
+        <input
+          placeholder="Firecrawl API key (optional)"
+        />
       </div>
 
       <p className="note">
-        For a production app, keep API keys on a secure backend instead of
+        For a production app, keep API keys
+        on a secure backend instead of
         shipping them inside the APK.
       </p>
     </section>
   );
+
+  /* ---------------- MEMORY SETTINGS ---------------- */
 
   const renderMemorySettings = () => (
     <section className="screen">
@@ -816,24 +1565,44 @@ export default function App() {
 
       <div className="page-title compact-title">
         <span>LOCAL DATA</span>
+
         <h1>Memory</h1>
-        <p>Manage your MYRA memory data.</p>
+
+        <p>
+          Manage your MYRA memory data.
+        </p>
       </div>
 
-      <div className="big-action" onClick={exportMemory}>
+      <div
+        className="big-action"
+        onClick={exportMemory}
+      >
         <span>↑</span>
+
         <div>
-          <strong>Export Memory</strong>
-          <small>Save your memories as JSON</small>
+          <strong>
+            Export Memory
+          </strong>
+
+          <small>
+            Save your memories as JSON
+          </small>
         </div>
       </div>
 
       <label className="big-action">
         <span>↓</span>
+
         <div>
-          <strong>Import Memory</strong>
-          <small>Restore a MYRA JSON memory file</small>
+          <strong>
+            Import Memory
+          </strong>
+
+          <small>
+            Restore a MYRA JSON memory file
+          </small>
         </div>
+
         <input
           type="file"
           accept=".json,application/json"
@@ -844,27 +1613,40 @@ export default function App() {
     </section>
   );
 
+  /* ---------------- HISTORY ---------------- */
+
   const renderHistorySettings = () => {
-    const filtered = history.filter((item) =>
-      `${item.text} ${item.answer}`
-        .toLowerCase()
-        .includes(historySearch.toLowerCase())
-    );
+    const filtered =
+      history.filter((item) =>
+        `${item.text} ${item.answer}`
+          .toLowerCase()
+          .includes(
+            historySearch.toLowerCase()
+          )
+      );
 
     return (
       <section className="screen">
         {renderHeader("History", true)}
 
         <div className="page-title compact-title">
-          <span>CONVERSATIONS</span>
+          <span>
+            CONVERSATIONS
+          </span>
+
           <h1>History</h1>
         </div>
 
         <div className="search-box">
           🔎
+
           <input
             value={historySearch}
-            onChange={(e) => setHistorySearch(e.target.value)}
+            onChange={(e) =>
+              setHistorySearch(
+                e.target.value
+              )
+            }
             placeholder="Search history..."
           />
         </div>
@@ -872,23 +1654,44 @@ export default function App() {
         {filtered.length === 0 ? (
           <div className="empty-card">
             <span>◷</span>
-            <strong>No history</strong>
-            <p>Your MYRA conversations will appear here.</p>
+
+            <strong>
+              No history
+            </strong>
+
+            <p>
+              Your MYRA conversations will
+              appear here.
+            </p>
           </div>
         ) : (
           <div className="history-list">
             {filtered.map((item) => (
-              <div className="history-card" key={item.id}>
-                <strong>{item.text}</strong>
-                <small>{item.time}</small>
-                <span>{item.turns} turns</span>
+              <div
+                className="history-card"
+                key={item.id}
+              >
+                <strong>
+                  {item.text}
+                </strong>
+
+                <small>
+                  {item.time}
+                </small>
+
+                <span>
+                  {item.turns} turns
+                </span>
               </div>
             ))}
           </div>
         )}
 
         {history.length > 0 && (
-          <button className="danger-btn" onClick={clearHistory}>
+          <button
+            className="danger-btn"
+            onClick={clearHistory}
+          >
             Delete all history
           </button>
         )}
@@ -896,22 +1699,38 @@ export default function App() {
     );
   };
 
+  /* ---------------- LANGUAGE ---------------- */
+
   const renderLanguageSettings = () => (
     <section className="screen">
       {renderHeader("Language", true)}
 
       <div className="page-title compact-title">
         <span>LANGUAGE</span>
+
         <h1>Language</h1>
-        <p>Choose how MYRA should communicate.</p>
+
+        <p>
+          Choose how MYRA should communicate.
+        </p>
       </div>
 
       <div className="language-pills">
-        {["Follow phone", "English", "Bangla"].map((item) => (
+        {[
+          "Follow phone",
+          "English",
+          "Bangla",
+        ].map((item) => (
           <button
             key={item}
-            className={language === item ? "selected" : ""}
-            onClick={() => setLanguage(item)}
+            className={
+              language === item
+                ? "selected"
+                : ""
+            }
+            onClick={() =>
+              setLanguage(item)
+            }
           >
             {item}
           </button>
@@ -919,29 +1738,46 @@ export default function App() {
       </div>
 
       <p className="note">
-        Follow phone uses your device/browser language when available.
+        Follow phone uses your device/browser
+        language when available.
       </p>
     </section>
   );
+
+  /* ---------------- VOICE ---------------- */
 
   const renderVoiceSettings = () => (
     <section className="screen">
       {renderHeader("Voice", true)}
 
       <div className="page-title compact-title">
-        <span>VOICE CONTROL</span>
+        <span>
+          VOICE CONTROL
+        </span>
+
         <h1>Voice</h1>
       </div>
 
       <div className="toggle-card">
         <div>
-          <strong>Voice replies</strong>
-          <small>MYRA speaks AI responses.</small>
+          <strong>
+            Voice replies
+          </strong>
+
+          <small>
+            MYRA speaks AI responses.
+          </small>
         </div>
 
         <button
-          className={`switch ${voiceEnabled ? "on" : ""}`}
-          onClick={() => setVoiceEnabled((v) => !v)}
+          className={`switch ${
+            voiceEnabled ? "on" : ""
+          }`}
+          onClick={() =>
+            setVoiceEnabled(
+              (v) => !v
+            )
+          }
         >
           <span />
         </button>
@@ -949,13 +1785,24 @@ export default function App() {
 
       <div className="toggle-card">
         <div>
-          <strong>Hey MYRA</strong>
-          <small>Wake-word setting.</small>
+          <strong>
+            Hey MYRA
+          </strong>
+
+          <small>
+            Wake-word setting.
+          </small>
         </div>
 
         <button
-          className={`switch ${heyMyra ? "on" : ""}`}
-          onClick={() => setHeyMyra((v) => !v)}
+          className={`switch ${
+            heyMyra ? "on" : ""
+          }`}
+          onClick={() =>
+            setHeyMyra(
+              (v) => !v
+            )
+          }
         >
           <span />
         </button>
@@ -963,58 +1810,134 @@ export default function App() {
 
       <button
         className="wide-button"
-        onClick={() => speak("Hello. I am MYRA AI.")}
+        onClick={() =>
+          speak(
+            "Hello. I am MYRA AI."
+          )
+        }
       >
         ▶ Test MYRA voice
       </button>
 
       <p className="note">
-        Background wake-word listening requires native Android support and is
-        not enabled by this web-only layer.
+        Hey MYRA background listening will
+        be connected through the native
+        Android voice service in the next
+        native update.
       </p>
     </section>
   );
+
+  /* ---------------- PERMISSIONS CENTER ---------------- */
+
+  const permissionButton = (
+    type,
+    label,
+    icon,
+    description
+  ) => {
+    const allowed =
+      permissionStatus[type];
+
+    return (
+      <div className="permission-card">
+        <span>{icon}</span>
+
+        <div>
+          <strong>{label}</strong>
+
+          <small>
+            {description}
+          </small>
+        </div>
+
+        <button
+          onClick={() =>
+            askPermission(type)
+          }
+        >
+          {allowed
+            ? "Allowed"
+            : "Allow"}
+        </button>
+      </div>
+    );
+  };
 
   const renderPermissions = () => (
     <section className="screen">
-      {renderHeader("Permissions", true)}
+      {renderHeader(
+        "Permissions",
+        true
+      )}
 
       <div className="page-title compact-title">
-        <span>DEVICE ACCESS</span>
-        <h1>Permissions</h1>
-        <p>Check features that may require Android permissions.</p>
+        <span>
+          DEVICE ACCESS
+        </span>
+
+        <h1>
+          Permissions
+        </h1>
+
+        <p>
+          Give MYRA access only to features
+          you want to use.
+        </p>
       </div>
 
-      <div className="permission-card">
-        <span>🎙</span>
-        <div>
-          <strong>Microphone</strong>
-          <small>Required for voice recognition.</small>
-        </div>
-        <button onClick={startVoice}>Test</button>
-      </div>
+      {permissionButton(
+        "microphone",
+        "Microphone",
+        "🎙",
+        "Voice commands and MYRA voice control."
+      )}
 
-      <div className="permission-card">
-        <span>📞</span>
-        <div>
-          <strong>Phone</strong>
-          <small>Calling features can open the phone dialer.</small>
-        </div>
-        <button
-          onClick={() => {
-            window.location.href = "tel:";
-          }}
-        >
-          Open
-        </button>
-      </div>
+      {permissionButton(
+        "contacts",
+        "Contacts",
+        "👥",
+        "Find contacts by name for calls and SMS."
+      )}
+
+      {permissionButton(
+        "phone",
+        "Phone",
+        "📞",
+        "Make phone calls from MYRA commands."
+      )}
+
+      {permissionButton(
+        "sms",
+        "SMS",
+        "💬",
+        "Send SMS after your confirmation."
+      )}
+
+      {permissionButton(
+        "notifications",
+        "Notifications",
+        "🔔",
+        "MYRA notifications and background status."
+      )}
+
+      <button
+        className="wide-button"
+        onClick={openAppPermissions}
+      >
+        ⚙ Open Android App Permissions
+      </button>
 
       <p className="note">
-        Android system permissions must also be declared in the native
-        Capacitor project.
+        If a permission has already been
+        denied, Android may require you to
+        enable it manually from App Info →
+        Permissions.
       </p>
     </section>
   );
+
+  /* ---------------- GOOGLE ---------------- */
 
   const renderGoogle = () => (
     <section className="screen">
@@ -1022,15 +1945,28 @@ export default function App() {
 
       <div className="page-title compact-title">
         <span>ACCOUNT</span>
-        <h1>Google Sign-In</h1>
-        <p>Connect a Google account to MYRA.</p>
+
+        <h1>
+          Google Sign-In
+        </h1>
+
+        <p>
+          Connect a Google account to MYRA.
+        </p>
       </div>
 
       <div className="google-card">
-        <div className="google-logo">G</div>
-        <strong>Google Account</strong>
+        <div className="google-logo">
+          G
+        </div>
+
+        <strong>
+          Google Account
+        </strong>
+
         <small>
-          Real Google authentication requires Firebase/Google OAuth
+          Real Google authentication
+          requires Firebase/Google OAuth
           configuration.
         </small>
 
@@ -1047,38 +1983,223 @@ export default function App() {
     </section>
   );
 
+  /* ---------------- ACTION CONFIRMATION ---------------- */
+
+  const renderPendingAction = () => {
+    if (!pendingAction) return null;
+
+    if (pendingAction.type === "call") {
+      return (
+        <div className="action-panel">
+          <div className="action-panel-title">
+            📞 Call confirmation
+          </div>
+
+          <p>
+            Who should MYRA call?
+          </p>
+
+          <input
+            value={pendingAction.name}
+            onChange={(e) =>
+              setPendingAction(
+                (prev) => ({
+                  ...prev,
+                  name: e.target.value,
+                })
+              )
+            }
+            placeholder="Contact name"
+          />
+
+          <input
+            value={pendingAction.phone}
+            onChange={(e) =>
+              setPendingAction(
+                (prev) => ({
+                  ...prev,
+                  phone: e.target.value,
+                })
+              )
+            }
+            placeholder="Phone number"
+            inputMode="tel"
+          />
+
+          <div className="action-row">
+            <button
+              className="action-button"
+              onClick={() =>
+                setPendingAction(null)
+              }
+            >
+              Cancel
+            </button>
+
+            <button
+              className="action-button call"
+              onClick={() => {
+                const action =
+                  pendingAction;
+
+                setPendingAction(null);
+
+                runCall(
+                  action.phone,
+                  action.name
+                );
+              }}
+            >
+              📞 Call
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    if (pendingAction.type === "sms") {
+      return (
+        <div className="action-panel">
+          <div className="action-panel-title">
+            💬 SMS confirmation
+          </div>
+
+          <p>
+            Confirm the SMS before sending.
+          </p>
+
+          <input
+            value={pendingAction.name}
+            onChange={(e) =>
+              setPendingAction(
+                (prev) => ({
+                  ...prev,
+                  name: e.target.value,
+                })
+              )
+            }
+            placeholder="Contact name"
+          />
+
+          <input
+            value={pendingAction.phone}
+            onChange={(e) =>
+              setPendingAction(
+                (prev) => ({
+                  ...prev,
+                  phone: e.target.value,
+                })
+              )
+            }
+            placeholder="Phone number"
+            inputMode="tel"
+          />
+
+          <textarea
+            value={pendingAction.message}
+            onChange={(e) =>
+              setPendingAction(
+                (prev) => ({
+                  ...prev,
+                  message: e.target.value,
+                })
+              )
+            }
+            placeholder="SMS message"
+            rows={4}
+          />
+
+          <div className="action-row">
+            <button
+              className="action-button"
+              onClick={() =>
+                setPendingAction(null)
+              }
+            >
+              Cancel
+            </button>
+
+            <button
+              className="action-button sms"
+              onClick={() => {
+                const action =
+                  pendingAction;
+
+                setPendingAction(null);
+
+                runSms(
+                  action.phone,
+                  action.message,
+                  action.name
+                );
+              }}
+            >
+              💬 Send SMS
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return null;
+  };
+
+  /* ---------------- SETTINGS ROUTER ---------------- */
+
   const renderSettingsPage = () => {
     switch (settingsPage) {
       case "key":
         return renderKeySettings();
+
       case "memory":
         return renderMemorySettings();
+
       case "history":
         return renderHistorySettings();
+
       case "language":
         return renderLanguageSettings();
+
       case "voice":
         return renderVoiceSettings();
+
       case "permissions":
         return renderPermissions();
+
       case "google":
         return renderGoogle();
+
       default:
         return renderSettingsHome();
     }
   };
 
+  /* ---------------- MAIN ---------------- */
+
   return (
     <main className="myra-app">
       <div className="app-shell">
-        {tab === "myra" && renderMyra()}
-        {tab === "today" && renderToday()}
-        {tab === "memory" && renderMemory()}
-        {tab === "settings" && renderSettingsPage()}
+        {tab === "myra" &&
+          renderMyra()}
+
+        {tab === "today" &&
+          renderToday()}
+
+        {tab === "memory" &&
+          renderMemory()}
+
+        {tab === "settings" &&
+          renderSettingsPage()}
+
+        {renderPendingAction()}
 
         <nav className="bottom-nav">
           <button
-            className={tab === "myra" ? "active" : ""}
+            className={
+              tab === "myra"
+                ? "active"
+                : ""
+            }
             onClick={() => {
               setTab("myra");
               setSettingsPage(null);
@@ -1089,7 +2210,11 @@ export default function App() {
           </button>
 
           <button
-            className={tab === "today" ? "active" : ""}
+            className={
+              tab === "today"
+                ? "active"
+                : ""
+            }
             onClick={() => {
               setTab("today");
               setSettingsPage(null);
@@ -1100,7 +2225,11 @@ export default function App() {
           </button>
 
           <button
-            className={tab === "memory" ? "active" : ""}
+            className={
+              tab === "memory"
+                ? "active"
+                : ""
+            }
             onClick={() => {
               setTab("memory");
               setSettingsPage(null);
@@ -1111,7 +2240,11 @@ export default function App() {
           </button>
 
           <button
-            className={tab === "settings" ? "active" : ""}
+            className={
+              tab === "settings"
+                ? "active"
+                : ""
+            }
             onClick={() => {
               setTab("settings");
               setSettingsPage(null);
