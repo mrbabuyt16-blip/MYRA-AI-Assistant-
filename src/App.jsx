@@ -36,17 +36,13 @@ function App() {
 
   useEffect(() => {
     return () => {
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.stop();
-        } catch (e) {}
-      }
+      try {
+        recognitionRef.current?.stop();
+      } catch (e) {}
 
-      if ("speechSynthesis" in window) {
-        try {
-          window.speechSynthesis.cancel();
-        } catch (e) {}
-      }
+      try {
+        window.speechSynthesis?.cancel();
+      } catch (e) {}
     };
   }, []);
 
@@ -56,34 +52,30 @@ function App() {
 
   const requestMicrophonePermission = async () => {
     try {
-      // First ask Android native permission.
       try {
-        const nativeResult =
+        const result =
           await MyraNative.requestPermission({
             permission: "RECORD_AUDIO",
           });
 
-        if (nativeResult?.granted === false) {
+        if (result?.granted === false) {
           alert(
             "Microphone permission is not allowed.\n\n" +
               "Open Android Settings → Apps → MYRA AI → Permissions → Microphone → Allow."
           );
-
           return false;
         }
       } catch (nativeError) {
         console.warn(
-          "Native microphone permission check:",
+          "Native permission check:",
           nativeError
         );
       }
 
-      // Then allow the Android WebView to access microphone.
       if (!navigator.mediaDevices?.getUserMedia) {
         alert(
           "Microphone is not supported on this device."
         );
-
         return false;
       }
 
@@ -99,14 +91,13 @@ function App() {
       return true;
     } catch (error) {
       console.error(
-        "Microphone permission error:",
+        "Microphone error:",
         error
       );
 
       alert(
         "Microphone access is blocked.\n\n" +
-          "Open Android Settings → Apps → MYRA AI → Permissions → Microphone → Allow.\n\n" +
-          "Then open MYRA AI again."
+          "Open Android Settings → Apps → MYRA AI → Permissions → Microphone → Allow."
       );
 
       return false;
@@ -114,86 +105,7 @@ function App() {
   };
 
   // =========================
-  // NOTIFICATION PERMISSION
-  // =========================
-
-  const requestNotificationPermission = async () => {
-    try {
-      if (!("Notification" in window)) {
-        return false;
-      }
-
-      if (Notification.permission === "granted") {
-        return true;
-      }
-
-      if (Notification.permission === "default") {
-        const result =
-          await Notification.requestPermission();
-
-        return result === "granted";
-      }
-
-      return false;
-    } catch (error) {
-      console.error(
-        "Notification permission error:",
-        error
-      );
-
-      return false;
-    }
-  };
-
-  // =========================
-  // GEMINI
-  // =========================
-
-  const saveApiKey = () => {
-    const key = apiKey.trim();
-
-    if (!key) {
-      localStorage.removeItem("myra_gemini_key");
-      setConnected(false);
-
-      alert("Please paste your Gemini API key.");
-
-      return;
-    }
-
-    localStorage.setItem(
-      "myra_gemini_key",
-      key
-    );
-
-    setApiKey(key);
-    setConnected(true);
-
-    alert(
-      "Gemini API key saved successfully."
-    );
-  };
-
-  const disconnectApi = () => {
-    localStorage.removeItem(
-      "myra_gemini_key"
-    );
-
-    setApiKey("");
-    setConnected(false);
-
-    alert("Gemini API disconnected.");
-  };
-
-  const getGeminiUrl = () => {
-    return (
-      `https://generativelanguage.googleapis.com/v1beta/models/` +
-      `${GEMINI_MODEL}:generateContent`
-    );
-  };
-
-  // =========================
-  // VOICE REPLY
+  // SPEECH
   // =========================
 
   const speak = (text) => {
@@ -242,12 +154,10 @@ function App() {
       return;
     }
 
-    const microphoneAllowed =
+    const allowed =
       await requestMicrophonePermission();
 
-    if (!microphoneAllowed) {
-      return;
-    }
+    if (!allowed) return;
 
     const SpeechRecognition =
       window.SpeechRecognition ||
@@ -257,16 +167,13 @@ function App() {
       alert(
         "Voice recognition is not supported on this device."
       );
-
       return;
     }
 
     try {
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.stop();
-        } catch (e) {}
-      }
+      try {
+        recognitionRef.current?.stop();
+      } catch (e) {}
 
       const recognition =
         new SpeechRecognition();
@@ -292,15 +199,15 @@ function App() {
         if (text.trim()) {
           setInput(text.trim());
 
-          requestAnimationFrame(() => {
+          setTimeout(() => {
             inputRef.current?.focus();
-          });
+          }, 100);
         }
       };
 
       recognition.onerror = (event) => {
         console.error(
-          "Speech recognition error:",
+          "Speech recognition:",
           event.error
         );
 
@@ -311,7 +218,7 @@ function App() {
           event.error === "service-not-allowed"
         ) {
           alert(
-            "Microphone permission is blocked.\n\n" +
+            "Microphone permission was denied.\n\n" +
               "Open Android Settings → Apps → MYRA AI → Permissions → Microphone → Allow."
           );
         }
@@ -320,9 +227,9 @@ function App() {
       recognition.onend = () => {
         setListening(false);
 
-        requestAnimationFrame(() => {
+        setTimeout(() => {
           inputRef.current?.focus();
-        });
+        }, 100);
       };
 
       recognitionRef.current =
@@ -352,7 +259,6 @@ function App() {
       alert(
         "Please provide a valid phone number."
       );
-
       return;
     }
 
@@ -378,17 +284,13 @@ function App() {
       alert(
         "Please provide a valid phone number."
       );
-
       return;
     }
-
-    const encodedBody =
-      encodeURIComponent(body);
 
     window.location.href =
       `sms:${encodeURIComponent(
         cleanNumber
-      )}?body=${encodedBody}`;
+      )}?body=${encodeURIComponent(body)}`;
   };
 
   // =========================
@@ -418,34 +320,25 @@ function App() {
   };
 
   // =========================
-  // COMMAND PROCESSOR
+  // COMMANDS
   // =========================
 
-  const processCommand = (
-    command
-  ) => {
-    const text =
-      command.trim();
+  const processCommand = (command) => {
+    const text = command.trim();
+    const lower = text.toLowerCase();
 
-    const lower =
-      text.toLowerCase();
-
-    // CALL
     if (
       lower.startsWith("call ") ||
       lower.startsWith("কল ") ||
       lower.startsWith("phone ") ||
       lower.startsWith("ফোন ")
     ) {
-      const number =
-        text.replace(
-          /^(call|কল|phone|ফোন)\s*/i,
-          ""
-        );
+      const number = text.replace(
+        /^(call|কল|phone|ফোন)\s*/i,
+        ""
+      );
 
-      if (
-        /[0-9+]{6,}/.test(number)
-      ) {
+      if (/[0-9+]{6,}/.test(number)) {
         makeCall(number);
 
         addAssistant(
@@ -460,7 +353,6 @@ function App() {
       return true;
     }
 
-    // SMS
     if (
       lower.startsWith("sms ") ||
       lower.startsWith("send sms ") ||
@@ -491,21 +383,18 @@ function App() {
         : input
     ).trim();
 
-    if (!text || thinking) {
-      return;
-    }
+    if (!text || thinking) return;
 
     setInput("");
-
     addUser(text);
 
     const handled =
       processCommand(text);
 
     if (handled) {
-      requestAnimationFrame(() => {
+      setTimeout(() => {
         inputRef.current?.focus();
-      });
+      }, 50);
 
       return;
     }
@@ -521,9 +410,9 @@ function App() {
         "Gemini is not connected yet. Open Settings and add your Gemini API key."
       );
 
-      requestAnimationFrame(() => {
+      setTimeout(() => {
         inputRef.current?.focus();
-      });
+      }, 50);
 
       return;
     }
@@ -626,7 +515,6 @@ function App() {
       }
 
       setConnected(true);
-
       addAssistant(answer);
     } catch (error) {
       console.error(
@@ -643,22 +531,17 @@ function App() {
     } finally {
       setThinking(false);
 
-      requestAnimationFrame(() => {
+      setTimeout(() => {
         inputRef.current?.focus();
-      });
+      }, 100);
     }
   };
 
-  // =========================
-  // QUICK ASK
-  // =========================
-
-  const quickAsk = (text) => {
-    setTab("chat");
-
-    setTimeout(() => {
-      sendMessage(text);
-    }, 50);
+  const getGeminiUrl = () => {
+    return (
+      `https://generativelanguage.googleapis.com/v1beta/models/` +
+      `${GEMINI_MODEL}:generateContent`
+    );
   };
 
   // =========================
@@ -673,6 +556,10 @@ function App() {
   const goChat = () => {
     setSettingsPage(false);
     setTab("chat");
+
+    setTimeout(() => {
+      inputRef.current?.focus();
+    }, 100);
   };
 
   const goSettings = () => {
@@ -680,11 +567,24 @@ function App() {
     setTab("settings");
   };
 
+  const quickAsk = (text) => {
+    setSettingsPage(false);
+    setTab("chat");
+
+    setTimeout(() => {
+      sendMessage(text);
+
+      setTimeout(() => {
+        inputRef.current?.focus();
+      }, 100);
+    }, 100);
+  };
+
   // =========================
-  // SETTINGS
+  // SETTINGS RENDER
   // =========================
 
-  const Settings = () => (
+  const renderSettings = () => (
     <div className="screen settings-screen">
       <div className="myra-header">
         <button
@@ -709,7 +609,6 @@ function App() {
           Customize your MYRA AI assistant
         </p>
 
-        {/* GEMINI */}
         <div className="setting-card">
           <div className="setting-title">
             Gemini AI
@@ -724,9 +623,7 @@ function App() {
             type="password"
             value={apiKey}
             onChange={(e) =>
-              setApiKey(
-                e.target.value
-              )
+              setApiKey(e.target.value)
             }
             placeholder="Paste Gemini API key"
             autoComplete="off"
@@ -756,25 +653,20 @@ function App() {
           {connected && (
             <button
               className="disconnect-button"
-              onClick={
-                disconnectApi
-              }
+              onClick={disconnectApi}
             >
               Disconnect
             </button>
           )}
         </div>
 
-        {/* VOICE */}
         <div className="setting-card">
           <div className="setting-title">
             🎤 Voice
           </div>
 
           <div className="toggle-card">
-            <span>
-              Voice replies
-            </span>
+            <span>Voice replies</span>
 
             <label className="switch">
               <input
@@ -792,7 +684,6 @@ function App() {
           </div>
         </div>
 
-        {/* LANGUAGE */}
         <div className="setting-card">
           <div className="setting-title">
             🌐 Language
@@ -831,7 +722,6 @@ function App() {
           </div>
         </div>
 
-        {/* APP INFO */}
         <div className="setting-card">
           <div className="setting-title">
             📱 MYRA AI
@@ -850,10 +740,10 @@ function App() {
   );
 
   // =========================
-  // HOME
+  // HOME RENDER
   // =========================
 
-  const Home = () => (
+  const renderHome = () => (
     <div className="screen">
       <div className="myra-header">
         <div className="brand-small">
@@ -930,9 +820,7 @@ function App() {
 
         <button
           className="command-action"
-          onClick={
-            startListening
-          }
+          onClick={startListening}
         >
           🎤
           <span>Voice</span>
@@ -943,10 +831,7 @@ function App() {
         {messages
           .slice(-4)
           .map(
-            (
-              message,
-              index
-            ) => (
+            (message, index) => (
               <div
                 key={index}
                 className={
@@ -978,9 +863,7 @@ function App() {
               ? "voice-button listening"
               : "voice-button"
           }
-          onClick={
-            startListening
-          }
+          onClick={startListening}
         >
           {listening
             ? "●"
@@ -993,9 +876,7 @@ function App() {
           ref={inputRef}
           value={input}
           onChange={(e) =>
-            setInput(
-              e.target.value
-            )
+            setInput(e.target.value)
           }
           onKeyDown={(e) => {
             if (
@@ -1032,10 +913,10 @@ function App() {
   );
 
   // =========================
-  // CHAT
+  // CHAT RENDER
   // =========================
 
-  const Chat = () => (
+  const renderChat = () => (
     <div className="screen chat-screen">
       <div className="myra-header">
         <div className="brand-small">
@@ -1061,22 +942,17 @@ function App() {
 
       <div className="chat-messages">
         {messages.map(
-          (
-            message,
-            index
-          ) => (
+          (message, index) => (
             <div
               key={index}
               className={
-                message.role ===
-                "user"
+                message.role === "user"
                   ? "chat-bubble user-bubble"
                   : "chat-bubble ai-bubble"
               }
             >
               <div className="bubble-name">
-                {message.role ===
-                "user"
+                {message.role === "user"
                   ? "You"
                   : "Myra"}
               </div>
@@ -1098,9 +974,7 @@ function App() {
       <div className="text-input-wrap chat-input">
         <button
           className="mic-mini"
-          onClick={
-            startListening
-          }
+          onClick={startListening}
         >
           🎤
         </button>
@@ -1109,9 +983,7 @@ function App() {
           ref={inputRef}
           value={input}
           onChange={(e) =>
-            setInput(
-              e.target.value
-            )
+            setInput(e.target.value)
           }
           onKeyDown={(e) => {
             if (
@@ -1148,14 +1020,14 @@ function App() {
   );
 
   // =========================
-  // SETTINGS SCREEN
+  // SETTINGS PAGE
   // =========================
 
   if (settingsPage) {
     return (
       <div className="myra-app">
         <div className="app-shell">
-          <Settings />
+          {renderSettings()}
         </div>
       </div>
     );
@@ -1168,13 +1040,11 @@ function App() {
   return (
     <div className="myra-app">
       <div className="app-shell">
-        {tab === "chat" ? (
-          <Chat />
-        ) : (
-          <Home />
-        )}
 
-        {/* NEW BOTTOM NAVIGATION */}
+        {tab === "home"
+          ? renderHome()
+          : renderChat()}
+
         <nav className="bottom-nav">
           <button
             className={
@@ -1188,10 +1058,7 @@ function App() {
             <span className="nav-icon">
               ⌂
             </span>
-
-            <span>
-              Home
-            </span>
+            <span>Home</span>
           </button>
 
           <button
@@ -1206,10 +1073,7 @@ function App() {
             <span className="nav-icon">
               ◉
             </span>
-
-            <span>
-              Chat
-            </span>
+            <span>Chat</span>
           </button>
 
           <button
@@ -1218,18 +1082,13 @@ function App() {
                 ? "active"
                 : ""
             }
-            onClick={
-              goSettings
-            }
+            onClick={goSettings}
             aria-label="Settings"
           >
             <span className="nav-icon">
               ⚙
             </span>
-
-            <span>
-              Settings
-            </span>
+            <span>Settings</span>
           </button>
         </nav>
       </div>
