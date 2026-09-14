@@ -29,6 +29,7 @@ function App() {
   const [language, setLanguage] = useState("English");
 
   const recognitionRef = useRef(null);
+  const inputRef = useRef(null);
 
   useEffect(() => {
     return () => {
@@ -64,7 +65,7 @@ function App() {
       console.error("Microphone permission error:", error);
 
       alert(
-        "Microphone permission is required.\n\nPlease tap Allow when Android asks."
+        "Microphone permission is required.\n\nPlease allow Microphone permission from Android App Info."
       );
 
       return false;
@@ -86,24 +87,11 @@ function App() {
         return result === "granted";
       }
 
-      alert(
-        "Notifications are blocked.\n\nOpen Android Settings → Apps → MYRA AI → Notifications."
-      );
-
       return false;
     } catch (error) {
       console.error("Notification permission error:", error);
       return false;
     }
-  };
-
-  const requestAllUsefulPermissions = async () => {
-    await requestMicrophonePermission();
-    await requestNotificationPermission();
-
-    alert(
-      "Permission request completed.\n\nAndroid controls which permissions can be granted."
-    );
   };
 
   const saveApiKey = () => {
@@ -202,6 +190,10 @@ function App() {
 
         if (text.trim()) {
           setInput(text.trim());
+
+          requestAnimationFrame(() => {
+            inputRef.current?.focus();
+          });
         }
       };
 
@@ -215,13 +207,17 @@ function App() {
 
         if (event.error === "not-allowed") {
           alert(
-            "Microphone permission was denied. Please allow Microphone permission from Android Settings."
+            "Microphone permission was denied. Please allow Microphone permission from Android App Info."
           );
         }
       };
 
       recognition.onend = () => {
         setListening(false);
+
+        requestAnimationFrame(() => {
+          inputRef.current?.focus();
+        });
       };
 
       recognitionRef.current = recognition;
@@ -347,6 +343,9 @@ function App() {
     const handled = processCommand(text);
 
     if (handled) {
+      requestAnimationFrame(() => {
+        inputRef.current?.focus();
+      });
       return;
     }
 
@@ -358,6 +357,11 @@ function App() {
       addAssistant(
         "Gemini is not connected yet. Open Settings and add your Gemini API key."
       );
+
+      requestAnimationFrame(() => {
+        inputRef.current?.focus();
+      });
+
       return;
     }
 
@@ -455,6 +459,10 @@ function App() {
       );
     } finally {
       setThinking(false);
+
+      requestAnimationFrame(() => {
+        inputRef.current?.focus();
+      });
     }
   };
 
@@ -463,7 +471,30 @@ function App() {
 
     setTimeout(() => {
       sendMessage(text);
+
+      requestAnimationFrame(() => {
+        inputRef.current?.focus();
+      });
     }, 50);
+  };
+
+  const goHome = () => {
+    setSettingsPage(false);
+    setTab("home");
+  };
+
+  const goChat = () => {
+    setSettingsPage(false);
+    setTab("chat");
+
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+    });
+  };
+
+  const goSettings = () => {
+    setSettingsPage(true);
+    setTab("settings");
   };
 
   const Settings = () => (
@@ -471,10 +502,7 @@ function App() {
       <div className="myra-header">
         <button
           className="icon-btn"
-          onClick={() => {
-            setSettingsPage(false);
-            setTab("home");
-          }}
+          onClick={goHome}
         >
           ←
         </button>
@@ -542,31 +570,6 @@ function App() {
               Disconnect
             </button>
           )}
-        </div>
-
-        <div className="setting-card">
-          <div className="setting-title">
-            🔐 Android Permissions
-          </div>
-
-          <div className="setting-description">
-            Request MYRA's microphone and notification
-            permissions.
-          </div>
-
-          <button
-            className="wide-button"
-            onClick={
-              requestAllUsefulPermissions
-            }
-          >
-            Allow MYRA Permissions
-          </button>
-
-          <div className="note">
-            Android controls which permissions are
-            available and whether they can be granted.
-          </div>
         </div>
 
         <div className="setting-card">
@@ -651,10 +654,7 @@ function App() {
 
         <button
           className="icon-btn"
-          onClick={() => {
-            setSettingsPage(true);
-            setTab("settings");
-          }}
+          onClick={goSettings}
         >
           ⚙
         </button>
@@ -766,20 +766,32 @@ function App() {
 
       <div className="text-input-wrap">
         <input
+          ref={inputRef}
           value={input}
           onChange={(e) =>
             setInput(e.target.value)
           }
           onKeyDown={(e) => {
-            if (e.key === "Enter") {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
               sendMessage();
             }
+          }}
+          onFocus={() => {
+            window.setTimeout(() => {
+              inputRef.current?.scrollIntoView({
+                block: "nearest",
+              });
+            }, 100);
           }}
           placeholder={
             listening
               ? "Listening..."
               : "Ask Myra anything..."
           }
+          autoComplete="off"
+          autoCorrect="on"
+          spellCheck={true}
         />
 
         <button
@@ -858,20 +870,32 @@ function App() {
         </button>
 
         <input
+          ref={inputRef}
           value={input}
           onChange={(e) =>
             setInput(e.target.value)
           }
           onKeyDown={(e) => {
-            if (e.key === "Enter") {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
               sendMessage();
             }
+          }}
+          onFocus={() => {
+            window.setTimeout(() => {
+              inputRef.current?.scrollIntoView({
+                block: "nearest",
+              });
+            }, 100);
           }}
           placeholder={
             listening
               ? "Listening..."
               : "Message Myra..."
           }
+          autoComplete="off"
+          autoCorrect="on"
+          spellCheck={true}
         />
 
         <button
@@ -905,18 +929,17 @@ function App() {
           <Home />
         )}
 
-        <div className="bottom-nav">
+        <nav className="bottom-nav">
           <button
             className={
               tab === "home"
                 ? "active"
                 : ""
             }
-            onClick={() =>
-              setTab("home")
-            }
+            onClick={goHome}
+            aria-label="Home"
           >
-            🏠
+            <span className="nav-icon">⌂</span>
             <span>Home</span>
           </button>
 
@@ -926,11 +949,10 @@ function App() {
                 ? "active"
                 : ""
             }
-            onClick={() =>
-              setTab("chat")
-            }
+            onClick={goChat}
+            aria-label="Chat"
           >
-            💬
+            <span className="nav-icon">◉</span>
             <span>Chat</span>
           </button>
 
@@ -940,15 +962,13 @@ function App() {
                 ? "active"
                 : ""
             }
-            onClick={() => {
-              setSettingsPage(true);
-              setTab("settings");
-            }}
+            onClick={goSettings}
+            aria-label="Settings"
           >
-            ⚙️
+            <span className="nav-icon">⚙</span>
             <span>Settings</span>
           </button>
-        </div>
+        </nav>
       </div>
     </div>
   );
