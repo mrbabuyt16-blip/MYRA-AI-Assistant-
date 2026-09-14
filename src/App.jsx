@@ -34,6 +34,7 @@ function App() {
   );
 
   const [ttsVoices, setTtsVoices] = useState([]);
+
   const [selectedVoiceName, setSelectedVoiceName] = useState(
     () => localStorage.getItem("myra_selected_voice") || ""
   );
@@ -43,9 +44,7 @@ function App() {
   const inputRef = useRef(null);
   const recognitionRef = useRef(null);
 
-  // -------------------------
-  // LOAD FEMALE VOICES
-  // -------------------------
+  /* ---------------- VOICE LIST ---------------- */
 
   const loadVoices = () => {
     if (!("speechSynthesis" in window)) {
@@ -55,13 +54,10 @@ function App() {
 
     const voices = window.speechSynthesis.getVoices();
 
-    const englishVoices = voices.filter((v) =>
-      /^en(-|_)/i.test(v.lang || "")
-    );
-
-    const banglaVoices = voices.filter((v) =>
-      /^bn(-|_)/i.test(v.lang || "")
-    );
+    if (!voices.length) {
+      setTtsVoices([]);
+      return;
+    }
 
     const preferredFemaleNames = [
       "female",
@@ -74,7 +70,11 @@ function App() {
       "ava",
       "allison",
       "victoria",
-      "google us english",
+      "aria",
+      "jenny",
+      "sara",
+      "ana",
+      "google us english female",
       "google uk english female",
       "microsoft zira",
       "microsoft aria",
@@ -91,6 +91,14 @@ function App() {
       );
     });
 
+    const englishVoices = voices.filter((v) =>
+      /^en(-|_)/i.test(v.lang || "")
+    );
+
+    const banglaVoices = voices.filter((v) =>
+      /^bn(-|_)/i.test(v.lang || "")
+    );
+
     let candidates = [
       ...femaleDetected,
       ...englishVoices,
@@ -100,33 +108,34 @@ function App() {
     const unique = [];
     const seen = new Set();
 
-    for (const v of candidates) {
-      const key = `${v.name}__${v.lang}`;
+    for (const item of candidates) {
+      const key = `${item.name}__${item.lang}`;
 
       if (!seen.has(key)) {
         seen.add(key);
-        unique.push(v);
+        unique.push(item);
       }
     }
 
-    // Remove voices that are obviously male if their names identify them.
     const maleNames = [
       "david",
       "mark",
       "george",
       "daniel",
       "james",
-      "alex",
       "fred",
       "thomas",
       "richard",
     ];
 
-    const filtered = unique.filter((v) => {
-      const name = (v.name || "").toLowerCase();
+    const filtered = unique.filter((item) => {
+      const name = (item.name || "").toLowerCase();
 
-      return !maleNames.some((male) =>
-        name === male || name.includes(` ${male}`)
+      return !maleNames.some(
+        (male) =>
+          name === male ||
+          name.startsWith(`${male} `) ||
+          name.includes(` ${male} `)
       );
     });
 
@@ -146,10 +155,6 @@ function App() {
       }
     };
   }, []);
-
-  // -------------------------
-  // SAVE SETTINGS
-  // -------------------------
 
   useEffect(() => {
     localStorage.setItem(
@@ -174,10 +179,6 @@ function App() {
     }
   }, [selectedVoiceName]);
 
-  // -------------------------
-  // CLEANUP
-  // -------------------------
-
   useEffect(() => {
     return () => {
       try {
@@ -190,9 +191,7 @@ function App() {
     };
   }, []);
 
-  // -------------------------
-  // FOCUS INPUT
-  // -------------------------
+  /* ---------------- INPUT ---------------- */
 
   const focusInput = () => {
     setTimeout(() => {
@@ -200,34 +199,32 @@ function App() {
     }, 80);
   };
 
-  // -------------------------
-  // MICROPHONE PERMISSION
-  // -------------------------
+  /* ---------------- MICROPHONE ---------------- */
 
   const requestMicrophonePermission = async () => {
     try {
+      /*
+       * Check native Android permission state.
+       * We DO NOT stop here when granted is false.
+       *
+       * getUserMedia() below is responsible for triggering
+       * the Android WebView microphone permission request.
+       */
       try {
-        const result =
-          await MyraNative.requestPermission({
-            permission: "RECORD_AUDIO",
-          });
-
-        if (result?.granted === false) {
-          alert(
-            "Microphone permission is required.\n\n" +
-              "Android Settings → Apps → MYRA AI → Permissions → Microphone → Allow"
-          );
-
-          return false;
-        }
+        await MyraNative.requestPermission({
+          permission: "RECORD_AUDIO",
+        });
       } catch (nativeError) {
         console.warn(
-          "Native microphone permission:",
+          "Native microphone check:",
           nativeError
         );
       }
 
-      if (!navigator.mediaDevices?.getUserMedia) {
+      if (
+        !navigator.mediaDevices ||
+        !navigator.mediaDevices.getUserMedia
+      ) {
         alert(
           "Microphone is not supported on this device."
         );
@@ -260,31 +257,26 @@ function App() {
     }
   };
 
-  // -------------------------
-  // GET SELECTED VOICE
-  // -------------------------
+  /* ---------------- TEXT TO SPEECH ---------------- */
 
   const getSelectedVoice = () => {
     if (!("speechSynthesis" in window)) {
       return null;
     }
 
-    const voices = window.speechSynthesis.getVoices();
-
     if (!selectedVoiceName) {
       return null;
     }
 
+    const voices =
+      window.speechSynthesis.getVoices();
+
     return (
       voices.find(
-        (v) => v.name === selectedVoiceName
+        (item) => item.name === selectedVoiceName
       ) || null
     );
   };
-
-  // -------------------------
-  // SPEAK
-  // -------------------------
 
   const speak = (text) => {
     if (
@@ -305,7 +297,8 @@ function App() {
           ? "bn-BD"
           : "en-US";
 
-      const selected = getSelectedVoice();
+      const selected =
+        getSelectedVoice();
 
       if (selected) {
         utterance.voice = selected;
@@ -334,15 +327,12 @@ function App() {
     }
   };
 
-  // -------------------------
-  // PREVIEW VOICE
-  // -------------------------
-
-  const previewVoice = (voiceItem, index) => {
+  const previewVoice = (voiceItem) => {
     if (!("speechSynthesis" in window)) {
       alert(
         "Text-to-speech is not supported on this device."
       );
+
       return;
     }
 
@@ -353,12 +343,13 @@ function App() {
         voiceItem.name
       );
 
+      const text =
+        language === "Bangla"
+          ? "হ্যালো, আমি মাইরা।"
+          : "Hello, I'm Myra. How can I help you?";
+
       const utterance =
-        new SpeechSynthesisUtterance(
-          language === "Bangla"
-            ? "হ্যালো, আমি মাইরা।"
-            : "Hello, I'm Myra. How can I help you?"
-        );
+        new SpeechSynthesisUtterance(text);
 
       utterance.voice = voiceItem;
       utterance.lang = voiceItem.lang;
@@ -385,10 +376,6 @@ function App() {
       setPreviewingVoice("");
     }
   };
-
-  // -------------------------
-  // SELECT VOICE
-  // -------------------------
 
   const selectVoice = (voiceItem) => {
     try {
@@ -425,9 +412,7 @@ function App() {
     );
   };
 
-  // -------------------------
-  // VOICE INPUT
-  // -------------------------
+  /* ---------------- SPEECH RECOGNITION ---------------- */
 
   const startListening = async () => {
     if (listening) {
@@ -441,7 +426,9 @@ function App() {
     const allowed =
       await requestMicrophonePermission();
 
-    if (!allowed) return;
+    if (!allowed) {
+      return;
+    }
 
     const SpeechRecognition =
       window.SpeechRecognition ||
@@ -526,14 +513,14 @@ function App() {
     }
   };
 
-  // -------------------------
-  // CALL
-  // -------------------------
+  /* ---------------- PHONE ---------------- */
 
   const makeCall = (number) => {
-    const cleanNumber = String(
-      number || ""
-    ).replace(/[^0-9+]/g, "");
+    const cleanNumber =
+      String(number || "").replace(
+        /[^0-9+]/g,
+        ""
+      );
 
     if (!cleanNumber) {
       alert(
@@ -549,9 +536,7 @@ function App() {
       )}`;
   };
 
-  // -------------------------
-  // MESSAGES
-  // -------------------------
+  /* ---------------- MESSAGES ---------------- */
 
   const addUser = (text) => {
     setMessages((prev) => [
@@ -575,9 +560,7 @@ function App() {
     speak(text);
   };
 
-  // -------------------------
-  // COMMANDS
-  // -------------------------
+  /* ---------------- COMMANDS ---------------- */
 
   const processCommand = (command) => {
     const text = command.trim();
@@ -589,10 +572,11 @@ function App() {
       lower.startsWith("phone ") ||
       lower.startsWith("ফোন ")
     ) {
-      const number = text.replace(
-        /^(call|কল|phone|ফোন)\s*/i,
-        ""
-      );
+      const number =
+        text.replace(
+          /^(call|কল|phone|ফোন)\s*/i,
+          ""
+        );
 
       if (/[0-9+]{6,}/.test(number)) {
         makeCall(number);
@@ -626,9 +610,7 @@ function App() {
     return false;
   };
 
-  // -------------------------
-  // GEMINI URL
-  // -------------------------
+  /* ---------------- GEMINI ---------------- */
 
   const getGeminiUrl = () => {
     return (
@@ -636,10 +618,6 @@ function App() {
       `${GEMINI_MODEL}:generateContent`
     );
   };
-
-  // -------------------------
-  // SEND MESSAGE
-  // -------------------------
 
   const sendMessage = async (
     customText = null
@@ -650,9 +628,12 @@ function App() {
         : input
     ).trim();
 
-    if (!text || thinking) return;
+    if (!text || thinking) {
+      return;
+    }
 
     setInput("");
+
     addUser(text);
 
     const handled =
@@ -744,8 +725,7 @@ function App() {
       let data;
 
       try {
-        data =
-          await response.json();
+        data = await response.json();
       } catch (error) {
         throw new Error(
           `HTTP ${response.status}`
@@ -776,6 +756,7 @@ function App() {
       }
 
       setConnected(true);
+
       addAssistant(answer);
     } catch (error) {
       console.error(
@@ -795,9 +776,7 @@ function App() {
     }
   };
 
-  // -------------------------
-  // QUICK ASK
-  // -------------------------
+  /* ---------------- QUICK ACTIONS ---------------- */
 
   const quickAsk = (text) => {
     setTab("chat");
@@ -807,9 +786,7 @@ function App() {
     }, 120);
   };
 
-  // -------------------------
-  // SAVE API
-  // -------------------------
+  /* ---------------- API SETTINGS ---------------- */
 
   const saveApiKey = () => {
     const key = apiKey.trim();
@@ -854,13 +831,13 @@ function App() {
     );
   };
 
-  // -------------------------
-  // HOME
-  // -------------------------
+  /* ---------------- HOME ---------------- */
 
   const renderHome = () => (
     <div className="screen">
+
       <div className="myra-header">
+
         <div className="brand-small">
           <span className="brand-dot" />
           MYRA
@@ -874,15 +851,19 @@ function App() {
         >
           ⚙
         </button>
+
       </div>
 
       <div className="hero-area">
+
         <div className="myra-orb">
+
           <div className="orb-ring" />
 
           <div className="orb-core">
             M
           </div>
+
         </div>
 
         <h1 className="greeting">
@@ -894,6 +875,7 @@ function App() {
         </p>
 
         <div className="connection-status hero-status">
+
           <span
             className={
               connected
@@ -905,10 +887,13 @@ function App() {
           {connected
             ? "AI Connected"
             : "AI Ready"}
+
         </div>
+
       </div>
 
       <div className="quick-row">
+
         <button
           className="command-action"
           onClick={() =>
@@ -941,12 +926,16 @@ function App() {
         >
           🎤
           <span>
-            {listening ? "Listening" : "Voice"}
+            {listening
+              ? "Listening"
+              : "Voice"}
           </span>
         </button>
+
       </div>
 
       <div className="compact-chat">
+
         {messages
           .slice(-4)
           .map(
@@ -959,6 +948,7 @@ function App() {
                     : "mini-message ai-mini"
                 }
               >
+
                 <span>
                   {message.role === "user"
                     ? "You"
@@ -968,12 +958,15 @@ function App() {
                 <p>
                   {message.text}
                 </p>
+
               </div>
             )
           )}
+
       </div>
 
       <div className="voice-control">
+
         <button
           className={
             listening
@@ -984,9 +977,11 @@ function App() {
         >
           {listening ? "●" : "🎙️"}
         </button>
+
       </div>
 
       <div className="text-input-wrap">
+
         <input
           ref={inputRef}
           value={input}
@@ -994,13 +989,17 @@ function App() {
             setInput(e.target.value)
           }
           onKeyDown={(e) => {
+
             if (
               e.key === "Enter" &&
               !e.shiftKey
             ) {
+
               e.preventDefault();
+
               sendMessage();
             }
+
           }}
           placeholder={
             listening
@@ -1023,17 +1022,19 @@ function App() {
         >
           ➤
         </button>
+
       </div>
+
     </div>
   );
 
-  // -------------------------
-  // CHAT
-  // -------------------------
+  /* ---------------- CHAT ---------------- */
 
   const renderChat = () => (
     <div className="screen chat-screen">
+
       <div className="myra-header">
+
         <div className="brand-small">
           <span className="brand-dot" />
           MYRA CHAT
@@ -1053,9 +1054,11 @@ function App() {
         >
           🗑
         </button>
+
       </div>
 
       <div className="chat-messages">
+
         {messages.map(
           (message, index) => (
             <div
@@ -1066,6 +1069,7 @@ function App() {
                   : "chat-bubble ai-bubble"
               }
             >
+
               <div className="bubble-name">
                 {message.role === "user"
                   ? "You"
@@ -1075,6 +1079,7 @@ function App() {
               <div className="bubble-text">
                 {message.text}
               </div>
+
             </div>
           )
         )}
@@ -1084,9 +1089,11 @@ function App() {
             Myra is thinking...
           </div>
         )}
+
       </div>
 
       <div className="text-input-wrap chat-input">
+
         <button
           className="mic-mini"
           onClick={startListening}
@@ -1101,13 +1108,17 @@ function App() {
             setInput(e.target.value)
           }
           onKeyDown={(e) => {
+
             if (
               e.key === "Enter" &&
               !e.shiftKey
             ) {
+
               e.preventDefault();
+
               sendMessage();
             }
+
           }}
           placeholder={
             listening
@@ -1130,17 +1141,19 @@ function App() {
         >
           ➤
         </button>
+
       </div>
+
     </div>
   );
 
-  // -------------------------
-  // SETTINGS
-  // -------------------------
+  /* ---------------- SETTINGS ---------------- */
 
   const renderSettings = () => (
     <div className="screen settings-screen">
+
       <div className="myra-header">
+
         <button
           className="icon-btn"
           onClick={() =>
@@ -1156,10 +1169,14 @@ function App() {
         </div>
 
         <div />
+
       </div>
 
       <div className="settings-content">
-        <h1>Settings</h1>
+
+        <h1>
+          Settings
+        </h1>
 
         <p className="settings-subtitle">
           Customize your MYRA AI assistant
@@ -1168,6 +1185,7 @@ function App() {
         {/* GEMINI */}
 
         <div className="setting-card">
+
           <div className="setting-title">
             Gemini AI
           </div>
@@ -1188,6 +1206,7 @@ function App() {
           />
 
           <div className="connection-status">
+
             <span
               className={
                 connected
@@ -1199,6 +1218,7 @@ function App() {
             {connected
               ? "Gemini connected"
               : "Gemini not connected"}
+
           </div>
 
           <button
@@ -1216,21 +1236,25 @@ function App() {
               Disconnect
             </button>
           )}
+
         </div>
 
-        {/* VOICE ON/OFF */}
+        {/* VOICE */}
 
         <div className="setting-card">
+
           <div className="setting-title">
             🎤 Voice
           </div>
 
           <div className="toggle-card">
+
             <span>
               Voice replies
             </span>
 
             <label className="switch">
+
               <input
                 type="checkbox"
                 checked={voice}
@@ -1242,13 +1266,17 @@ function App() {
               />
 
               <span />
+
             </label>
+
           </div>
+
         </div>
 
         {/* WOMAN VOICES */}
 
         <div className="setting-card">
+
           <div className="setting-title">
             👩 Woman Voice
           </div>
@@ -1258,15 +1286,20 @@ function App() {
           </div>
 
           {ttsVoices.length === 0 ? (
+
             <div className="note">
               No compatible text-to-speech voices were found.
-              Please install or enable a female voice in your
-              Android Text-to-Speech settings.
+              Please enable or install voices in your Android
+              Text-to-Speech settings.
             </div>
+
           ) : (
+
             <div className="voice-list">
+
               {ttsVoices.map(
                 (voiceItem, index) => {
+
                   const selected =
                     selectedVoiceName ===
                     voiceItem.name;
@@ -1276,6 +1309,7 @@ function App() {
                     voiceItem.name;
 
                   return (
+
                     <div
                       key={`${voiceItem.name}-${voiceItem.lang}-${index}`}
                       className={
@@ -1284,12 +1318,15 @@ function App() {
                           : "voice-option"
                       }
                     >
+
                       <div className="voice-info">
+
                         <div className="voice-number">
                           {index + 1}
                         </div>
 
                         <div>
+
                           <div className="voice-name">
                             Woman Voice {index + 1}
                           </div>
@@ -1298,16 +1335,18 @@ function App() {
                             {voiceItem.lang} •{" "}
                             {voiceItem.name}
                           </div>
+
                         </div>
+
                       </div>
 
                       <div className="voice-actions">
+
                         <button
                           className="preview-button"
                           onClick={() =>
                             previewVoice(
-                              voiceItem,
-                              index
+                              voiceItem
                             )
                           }
                         >
@@ -1332,12 +1371,16 @@ function App() {
                             ? "Selected"
                             : "Select"}
                         </button>
+
                       </div>
+
                     </div>
                   );
                 }
               )}
+
             </div>
+
           )}
 
           <button
@@ -1346,16 +1389,19 @@ function App() {
           >
             🔄 Refresh Voices
           </button>
+
         </div>
 
         {/* LANGUAGE */}
 
         <div className="setting-card">
+
           <div className="setting-title">
             🌐 Language
           </div>
 
           <div className="language-pills">
+
             <button
               className={
                 language === "English"
@@ -1363,9 +1409,7 @@ function App() {
                   : ""
               }
               onClick={() =>
-                setLanguage(
-                  "English"
-                )
+                setLanguage("English")
               }
             >
               English
@@ -1378,19 +1422,20 @@ function App() {
                   : ""
               }
               onClick={() =>
-                setLanguage(
-                  "Bangla"
-                )
+                setLanguage("Bangla")
               }
             >
               বাংলা
             </button>
+
           </div>
+
         </div>
 
         {/* APP INFO */}
 
         <div className="setting-card">
+
           <div className="setting-title">
             📱 MYRA AI
           </div>
@@ -1402,16 +1447,18 @@ function App() {
           <div className="note">
             MYRA AI Assistant
           </div>
+
         </div>
+
       </div>
+
     </div>
   );
 
-  // -------------------------
-  // SCREEN
-  // -------------------------
+  /* ---------------- SCREEN ---------------- */
 
   const renderScreen = () => {
+
     if (tab === "settings") {
       return renderSettings();
     }
@@ -1423,16 +1470,17 @@ function App() {
     return renderHome();
   };
 
-  // -------------------------
-  // APP
-  // -------------------------
+  /* ---------------- APP ---------------- */
 
   return (
     <div className="myra-app">
+
       <div className="app-shell">
+
         {renderScreen()}
 
         <nav className="bottom-nav">
+
           <button
             className={
               tab === "home"
@@ -1444,6 +1492,7 @@ function App() {
             }
             aria-label="Home"
           >
+
             <span className="nav-icon">
               ⌂
             </span>
@@ -1451,6 +1500,7 @@ function App() {
             <span>
               Home
             </span>
+
           </button>
 
           <button
@@ -1464,6 +1514,7 @@ function App() {
             }
             aria-label="Chat"
           >
+
             <span className="nav-icon">
               ◉
             </span>
@@ -1471,6 +1522,7 @@ function App() {
             <span>
               Chat
             </span>
+
           </button>
 
           <button
@@ -1484,6 +1536,7 @@ function App() {
             }
             aria-label="Settings"
           >
+
             <span className="nav-icon">
               ⚙
             </span>
@@ -1491,9 +1544,13 @@ function App() {
             <span>
               Settings
             </span>
+
           </button>
+
         </nav>
+
       </div>
+
     </div>
   );
 }
