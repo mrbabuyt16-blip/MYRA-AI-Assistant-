@@ -35,14 +35,16 @@ function App() {
       if (recognitionRef.current) {
         try {
           recognitionRef.current.stop();
-        } catch {}
+        } catch (e) {}
+      }
+
+      if ("speechSynthesis" in window) {
+        try {
+          window.speechSynthesis.cancel();
+        } catch (e) {}
       }
     };
   }, []);
-
-  // -----------------------------
-  // PERMISSIONS
-  // -----------------------------
 
   const requestMicrophonePermission = async () => {
     try {
@@ -72,7 +74,6 @@ function App() {
   const requestNotificationPermission = async () => {
     try {
       if (!("Notification" in window)) {
-        alert("Notification permission is not supported here.");
         return false;
       }
 
@@ -86,7 +87,7 @@ function App() {
       }
 
       alert(
-        "Notification permission is blocked.\n\nOpen Android Settings → Apps → MYRA AI → Notifications."
+        "Notifications are blocked.\n\nOpen Android Settings → Apps → MYRA AI → Notifications."
       );
 
       return false;
@@ -101,13 +102,9 @@ function App() {
     await requestNotificationPermission();
 
     alert(
-      "Permission request completed.\n\nAndroid will only show permissions that MYRA is allowed to request."
+      "Permission request completed.\n\nAndroid controls which permissions can be granted."
     );
   };
-
-  // -----------------------------
-  // GEMINI
-  // -----------------------------
 
   const saveApiKey = () => {
     const key = apiKey.trim();
@@ -138,12 +135,10 @@ function App() {
     return `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
   };
 
-  // -----------------------------
-  // VOICE OUTPUT
-  // -----------------------------
-
   const speak = (text) => {
-    if (!voice || !("speechSynthesis" in window)) return;
+    if (!voice || !("speechSynthesis" in window)) {
+      return;
+    }
 
     try {
       window.speechSynthesis.cancel();
@@ -162,10 +157,6 @@ function App() {
     }
   };
 
-  // -----------------------------
-  // VOICE INPUT
-  // -----------------------------
-
   const startListening = async () => {
     const microphoneAllowed =
       await requestMicrophonePermission();
@@ -180,7 +171,7 @@ function App() {
 
     if (!SpeechRecognition) {
       alert(
-        "Voice recognition is not supported on this device/browser."
+        "Voice recognition is not supported on this device."
       );
       return;
     }
@@ -189,7 +180,7 @@ function App() {
       if (recognitionRef.current) {
         try {
           recognitionRef.current.stop();
-        } catch {}
+        } catch (e) {}
       }
 
       const recognition = new SpeechRecognition();
@@ -241,10 +232,6 @@ function App() {
     }
   };
 
-  // -----------------------------
-  // CALL
-  // -----------------------------
-
   const makeCall = (number) => {
     const cleanNumber = String(number || "").replace(
       /[^0-9+]/g,
@@ -252,18 +239,13 @@ function App() {
     );
 
     if (!cleanNumber) {
-      alert("Please provide a phone number.");
+      alert("Please provide a valid phone number.");
       return;
     }
 
-    window.location.href = `tel:${encodeURIComponent(
-      cleanNumber
-    )}`;
+    window.location.href =
+      `tel:${encodeURIComponent(cleanNumber)}`;
   };
-
-  // -----------------------------
-  // SMS
-  // -----------------------------
 
   const openSms = (number, body = "") => {
     const cleanNumber = String(number || "").replace(
@@ -272,29 +254,42 @@ function App() {
     );
 
     if (!cleanNumber) {
-      alert("Please provide a phone number.");
+      alert("Please provide a valid phone number.");
       return;
     }
 
     const encodedBody = encodeURIComponent(body);
 
     window.location.href =
-      `sms:${encodeURIComponent(cleanNumber)}` +
-      `?body=${encodedBody}`;
+      `sms:${encodeURIComponent(cleanNumber)}?body=${encodedBody}`;
   };
 
-  // -----------------------------
-  // COMMAND PROCESSING
-  // -----------------------------
+  const addUser = (text) => {
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: "user",
+        text,
+      },
+    ]);
+  };
+
+  const addAssistant = (text) => {
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: "assistant",
+        text,
+      },
+    ]);
+
+    speak(text);
+  };
 
   const processCommand = (command) => {
     const text = command.trim();
-
-    if (!text) return false;
-
     const lower = text.toLowerCase();
 
-    // CALL
     if (
       lower.startsWith("call ") ||
       lower.startsWith("কল ") ||
@@ -320,7 +315,6 @@ function App() {
       return true;
     }
 
-    // SMS
     if (
       lower.startsWith("sms ") ||
       lower.startsWith("send sms ") ||
@@ -329,7 +323,7 @@ function App() {
       lower.startsWith("এসএমএস ")
     ) {
       addAssistant(
-        "I can open your Messages app with the number and message ready. You will need to press Send yourself."
+        "I can open your Messages app. You can review the message and press Send yourself."
       );
 
       return true;
@@ -338,42 +332,14 @@ function App() {
     return false;
   };
 
-  // -----------------------------
-  // MESSAGE HELPERS
-  // -----------------------------
-
-  const addUser = (text) => {
-    setMessages((prev) => [
-      ...prev,
-      {
-        role: "user",
-        text,
-      },
-    ]);
-  };
-
-  const addAssistant = (text) => {
-    setMessages((prev) => [
-      ...prev,
-      {
-        role: "assistant",
-        text,
-      },
-    ]);
-
-    speak(text);
-  };
-
-  // -----------------------------
-  // SEND MESSAGE
-  // -----------------------------
-
   const sendMessage = async (customText = null) => {
     const text = (
       customText !== null ? customText : input
     ).trim();
 
-    if (!text || thinking) return;
+    if (!text || thinking) {
+      return;
+    }
 
     setInput("");
     addUser(text);
@@ -398,10 +364,13 @@ function App() {
     setThinking(true);
 
     try {
-      const recentMessages = [...messages, {
-        role: "user",
-        text,
-      }];
+      const recentMessages = [
+        ...messages,
+        {
+          role: "user",
+          text,
+        },
+      ];
 
       const contents = recentMessages
         .slice(-12)
@@ -418,9 +387,7 @@ function App() {
         }));
 
       const response = await fetch(
-        `${getGeminiUrl()}?key=${encodeURIComponent(
-          key
-        )}`,
+        `${getGeminiUrl()}?key=${encodeURIComponent(key)}`,
         {
           method: "POST",
           headers: {
@@ -438,9 +405,7 @@ function App() {
                 },
               ],
             },
-
             contents,
-
             generationConfig: {
               temperature: 0.7,
               maxOutputTokens: 1200,
@@ -449,22 +414,21 @@ function App() {
         }
       );
 
-      let data = null;
+      let data;
 
       try {
         data = await response.json();
-      } catch {
+      } catch (error) {
         throw new Error(
           `HTTP ${response.status}`
         );
       }
 
       if (!response.ok) {
-        const apiMessage =
+        throw new Error(
           data?.error?.message ||
-          `Gemini request failed with HTTP ${response.status}.`;
-
-        throw new Error(apiMessage);
+            `Gemini request failed with HTTP ${response.status}.`
+        );
       }
 
       const answer =
@@ -484,31 +448,23 @@ function App() {
     } catch (error) {
       console.error("Gemini error:", error);
 
-      const message =
-        error?.message || "Unknown connection error.";
-
       addAssistant(
-        `Gemini connection failed.\n\n${message}\n\nCheck your API key, internet connection and Gemini API access.`
+        `Gemini connection failed.\n\n${
+          error?.message || "Unknown error."
+        }\n\nCheck your API key, internet connection and Gemini API access.`
       );
     } finally {
       setThinking(false);
     }
   };
 
-  // -----------------------------
-  // QUICK ACTIONS
-  // -----------------------------
-
   const quickAsk = (text) => {
     setTab("chat");
+
     setTimeout(() => {
       sendMessage(text);
     }, 50);
   };
-
-  // -----------------------------
-  // SETTINGS
-  // -----------------------------
 
   const Settings = () => (
     <div className="screen settings-screen">
@@ -594,8 +550,8 @@ function App() {
           </div>
 
           <div className="setting-description">
-            Allow MYRA to use the microphone and notifications
-            when Android asks.
+            Request MYRA's microphone and notification
+            permissions.
           </div>
 
           <button
@@ -608,8 +564,8 @@ function App() {
           </button>
 
           <div className="note">
-            Android controls which permissions are available
-            and whether they can be granted.
+            Android controls which permissions are
+            available and whether they can be granted.
           </div>
         </div>
 
@@ -619,9 +575,7 @@ function App() {
           </div>
 
           <div className="toggle-card">
-            <span>
-              Voice replies
-            </span>
+            <span>Voice replies</span>
 
             <label className="switch">
               <input
@@ -687,10 +641,6 @@ function App() {
     </div>
   );
 
-  // -----------------------------
-  // HOME
-  // -----------------------------
-
   const Home = () => (
     <div className="screen">
       <div className="myra-header">
@@ -713,6 +663,7 @@ function App() {
       <div className="hero-area">
         <div className="myra-orb">
           <div className="orb-ring" />
+
           <div className="orb-core">
             M
           </div>
@@ -734,6 +685,7 @@ function App() {
                 : "status-off"
             }
           />
+
           {connected
             ? "AI Connected"
             : "AI Ready"}
@@ -744,7 +696,9 @@ function App() {
         <button
           className="command-action"
           onClick={() =>
-            quickAsk("Tell me something interesting.")
+            quickAsk(
+              "Tell me something interesting."
+            )
           }
         >
           ✨
@@ -775,23 +729,26 @@ function App() {
       </div>
 
       <div className="compact-chat">
-        {messages.slice(-4).map((message, index) => (
-          <div
-            key={index}
-            className={
-              message.role === "user"
-                ? "mini-message user-mini"
-                : "mini-message ai-mini"
-            }
-          >
-            <span>
-              {message.role === "user"
-                ? "You"
-                : "Myra"}
-            </span>
-            <p>{message.text}</p>
-          </div>
-        ))}
+        {messages.slice(-4).map(
+          (message, index) => (
+            <div
+              key={index}
+              className={
+                message.role === "user"
+                  ? "mini-message user-mini"
+                  : "mini-message ai-mini"
+              }
+            >
+              <span>
+                {message.role === "user"
+                  ? "You"
+                  : "Myra"}
+              </span>
+
+              <p>{message.text}</p>
+            </div>
+          )
+        )}
       </div>
 
       <div className="voice-control">
@@ -837,18 +794,12 @@ function App() {
     </div>
   );
 
-  // -----------------------------
-  // CHAT
-  // -----------------------------
-
   const Chat = () => (
     <div className="screen chat-screen">
       <div className="myra-header">
-        <div>
-          <div className="brand-small">
-            <span className="brand-dot" />
-            MYRA CHAT
-          </div>
+        <div className="brand-small">
+          <span className="brand-dot" />
+          MYRA CHAT
         </div>
 
         <button
@@ -868,26 +819,28 @@ function App() {
       </div>
 
       <div className="chat-messages">
-        {messages.map((message, index) => (
-          <div
-            key={index}
-            className={
-              message.role === "user"
-                ? "chat-bubble user-bubble"
-                : "chat-bubble ai-bubble"
-            }
-          >
-            <div className="bubble-name">
-              {message.role === "user"
-                ? "You"
-                : "Myra"}
-            </div>
+        {messages.map(
+          (message, index) => (
+            <div
+              key={index}
+              className={
+                message.role === "user"
+                  ? "chat-bubble user-bubble"
+                  : "chat-bubble ai-bubble"
+              }
+            >
+              <div className="bubble-name">
+                {message.role === "user"
+                  ? "You"
+                  : "Myra"}
+              </div>
 
-            <div className="bubble-text">
-              {message.text}
+              <div className="bubble-text">
+                {message.text}
+              </div>
             </div>
-          </div>
-        ))}
+          )
+        )}
 
         {thinking && (
           <div className="chat-bubble ai-bubble thinking">
@@ -933,10 +886,6 @@ function App() {
     </div>
   );
 
-  // -----------------------------
-  // MAIN RENDER
-  // -----------------------------
-
   if (settingsPage) {
     return (
       <div className="myra-app">
@@ -950,14 +899,22 @@ function App() {
   return (
     <div className="myra-app">
       <div className="app-shell">
-        {tab === "chat" ? <Chat /> : <Home />}
+        {tab === "chat" ? (
+          <Chat />
+        ) : (
+          <Home />
+        )}
 
         <div className="bottom-nav">
           <button
             className={
-              tab === "home" ? "active" : ""
+              tab === "home"
+                ? "active"
+                : ""
             }
-            onClick={() => setTab("home")}
+            onClick={() =>
+              setTab("home")
+            }
           >
             🏠
             <span>Home</span>
@@ -965,9 +922,13 @@ function App() {
 
           <button
             className={
-              tab === "chat" ? "active" : ""
+              tab === "chat"
+                ? "active"
+                : ""
             }
-            onClick={() => setTab("chat")}
+            onClick={() =>
+              setTab("chat")
+            }
           >
             💬
             <span>Chat</span>
@@ -975,7 +936,9 @@ function App() {
 
           <button
             className={
-              tab === "settings" ? "active" : ""
+              tab === "settings"
+                ? "active"
+                : ""
             }
             onClick={() => {
               setSettingsPage(true);
@@ -992,5 +955,3 @@ function App() {
 }
 
 export default App;
-
-[/code]
