@@ -34,7 +34,7 @@ jobs:
       - name: Add Android platform
         run: npx cap add android
 
-      - name: Add MYRA Android permissions
+      - name: Add MYRA Android permissions and service
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -50,7 +50,9 @@ jobs:
               "android.permission.RECEIVE_SMS",
               "android.permission.POST_NOTIFICATIONS",
               "android.permission.ACCESS_FINE_LOCATION",
-              "android.permission.ACCESS_COARSE_LOCATION"
+              "android.permission.ACCESS_COARSE_LOCATION",
+              "android.permission.FOREGROUND_SERVICE",
+              "android.permission.FOREGROUND_SERVICE_MICROPHONE"
           ]
 
           for permission in permissions:
@@ -62,6 +64,21 @@ jobs:
                       line + "\n    <application",
                       1
                   )
+
+          service = '''
+              <service
+                  android:name=".MyraWakeService"
+                  android:enabled="true"
+                  android:exported="false"
+                  android:foregroundServiceType="microphone" />
+          '''
+
+          if "MyraWakeService" not in text:
+              text = text.replace(
+                  "</application>",
+                  service + "\n    </application>",
+                  1
+              )
 
           manifest.write_text(text)
           PY
@@ -89,26 +106,18 @@ jobs:
           @CapacitorPlugin(name = "MyraNative")
           public class MyraNativePlugin extends Plugin {
 
-              /*
-               * Microphone permission is requested by WebView
-               * through navigator.mediaDevices.getUserMedia().
-               *
-               * We only report the current Android permission state here.
-               */
               @PluginMethod
               public void requestPermission(PluginCall call) {
 
-                  String permission =
-                          call.getString("permission");
+                  String permission = call.getString("permission");
 
                   if (permission == null ||
                       permission.trim().isEmpty()) {
-
                       call.reject("Permission is required");
                       return;
                   }
 
-                  String androidPermission = null;
+                  String androidPermission;
 
                   switch (permission) {
 
@@ -138,14 +147,8 @@ jobs:
                               androidPermission =
                                       Manifest.permission.POST_NOTIFICATIONS;
                           } else {
-                              JSObject oldResult =
-                                      new JSObject();
-
-                              oldResult.put(
-                                      "granted",
-                                      true
-                              );
-
+                              JSObject oldResult = new JSObject();
+                              oldResult.put("granted", true);
                               call.resolve(oldResult);
                               return;
                           }
@@ -153,9 +156,7 @@ jobs:
                           break;
 
                       default:
-                          call.reject(
-                                  "Unsupported permission"
-                          );
+                          call.reject("Unsupported permission");
                           return;
                   }
 
@@ -164,18 +165,8 @@ jobs:
                                   androidPermission
                           ) == PackageManager.PERMISSION_GRANTED;
 
-                  JSObject result =
-                          new JSObject();
-
-                  /*
-                   * If Android has not granted it yet, return false.
-                   * The JavaScript side will then use getUserMedia(),
-                   * which triggers the Android WebView permission flow.
-                   */
-                  result.put(
-                          "granted",
-                          granted
-                  );
+                  JSObject result = new JSObject();
+                  result.put("granted", granted);
 
                   call.resolve(result);
               }
@@ -183,48 +174,36 @@ jobs:
               @PluginMethod
               public void call(PluginCall call) {
 
-                  String phone =
-                          call.getString("phone");
+                  String phone = call.getString("phone");
 
                   if (phone == null ||
                       phone.trim().isEmpty()) {
-
-                      call.reject(
-                              "Phone number is required"
-                      );
+                      call.reject("Phone number is required");
                       return;
                   }
 
                   if (getContext().checkSelfPermission(
                           Manifest.permission.CALL_PHONE
                   ) != PackageManager.PERMISSION_GRANTED) {
-
-                      call.reject(
-                              "CALL_PHONE permission not granted"
-                      );
+                      call.reject("CALL_PHONE permission not granted");
                       return;
                   }
 
                   try {
 
-                      Intent intent =
-                              new Intent(
-                                      Intent.ACTION_CALL,
-                                      Uri.parse(
-                                              "tel:" + phone
-                                      )
-                              );
+                      Intent intent = new Intent(
+                              Intent.ACTION_CALL,
+                              Uri.parse("tel:" + phone)
+                      );
 
                       intent.addFlags(
                               Intent.FLAG_ACTIVITY_NEW_TASK
                       );
 
                       getContext().startActivity(intent);
-
                       call.resolve();
 
                   } catch (Exception e) {
-
                       call.reject(
                               "Unable to make call: " +
                               e.getMessage()
@@ -235,18 +214,12 @@ jobs:
               @PluginMethod
               public void sms(PluginCall call) {
 
-                  String phone =
-                          call.getString("phone");
-
-                  String message =
-                          call.getString("message");
+                  String phone = call.getString("phone");
+                  String message = call.getString("message");
 
                   if (phone == null ||
                       phone.trim().isEmpty()) {
-
-                      call.reject(
-                              "Phone number is required"
-                      );
+                      call.reject("Phone number is required");
                       return;
                   }
 
@@ -257,7 +230,6 @@ jobs:
                   if (getContext().checkSelfPermission(
                           Manifest.permission.SEND_SMS
                   ) != PackageManager.PERMISSION_GRANTED) {
-
                       call.reject(
                               "SEND_SMS permission not granted"
                       );
@@ -280,7 +252,6 @@ jobs:
                       call.resolve();
 
                   } catch (Exception e) {
-
                       call.reject(
                               "Unable to send SMS: " +
                               e.getMessage()
@@ -296,7 +267,6 @@ jobs:
 
                   if (packageName == null ||
                       packageName.trim().isEmpty()) {
-
                       call.reject(
                               "Package name is required"
                       );
@@ -313,7 +283,6 @@ jobs:
                                       );
 
                       if (intent == null) {
-
                           call.reject(
                                   "App is not installed"
                           );
@@ -325,11 +294,9 @@ jobs:
                       );
 
                       getContext().startActivity(intent);
-
                       call.resolve();
 
                   } catch (Exception e) {
-
                       call.reject(
                               "Unable to open app: " +
                               e.getMessage()
@@ -338,17 +305,13 @@ jobs:
               }
 
               @PluginMethod
-              public void openAppSettings(
-                      PluginCall call
-              ) {
+              public void openAppSettings(PluginCall call) {
 
                   try {
 
-                      Intent intent =
-                              new Intent(
-                                      Settings
-                                              .ACTION_APPLICATION_DETAILS_SETTINGS
-                              );
+                      Intent intent = new Intent(
+                              Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+                      );
 
                       intent.setData(
                               Uri.parse(
@@ -363,11 +326,9 @@ jobs:
                       );
 
                       getContext().startActivity(intent);
-
                       call.resolve();
 
                   } catch (Exception e) {
-
                       call.reject(
                               "Unable to open app settings: " +
                               e.getMessage()
@@ -377,16 +338,335 @@ jobs:
           }
           EOF
 
+      - name: Create MYRA Wake Service
+        run: |
+          cat > android/app/src/main/java/com/myra/ai/MyraWakeService.java <<'EOF'
+          package com.myra.ai;
+
+          import android.app.Notification;
+          import android.app.NotificationChannel;
+          import android.app.NotificationManager;
+          import android.app.PendingIntent;
+          import android.app.Service;
+          import android.content.Intent;
+          import android.os.Build;
+          import android.os.IBinder;
+          import android.speech.RecognitionListener;
+          import android.speech.RecognizerIntent;
+          import android.speech.SpeechRecognizer;
+
+          import java.util.ArrayList;
+          import java.util.Locale;
+
+          public class MyraWakeService extends Service {
+
+              private static final String CHANNEL_ID =
+                      "myra_wake_channel";
+
+              private SpeechRecognizer recognizer;
+
+              private boolean running = true;
+
+              @Override
+              public void onCreate() {
+                  super.onCreate();
+
+                  createNotificationChannel();
+
+                  Notification notification =
+                          createNotification();
+
+                  if (Build.VERSION.SDK_INT >= 29) {
+
+                      startForeground(
+                              1001,
+                              notification,
+                              android.content.pm.ServiceInfo
+                                      .FOREGROUND_SERVICE_TYPE_MICROPHONE
+                      );
+
+                  } else {
+
+                      startForeground(
+                              1001,
+                              notification
+                      );
+                  }
+
+                  startRecognition();
+              }
+
+              private void startRecognition() {
+
+                  if (!SpeechRecognizer.isRecognitionAvailable(
+                          getApplicationContext()
+                  )) {
+                      return;
+                  }
+
+                  try {
+
+                      if (recognizer != null) {
+                          recognizer.destroy();
+                      }
+
+                      recognizer =
+                              SpeechRecognizer.createSpeechRecognizer(
+                                      getApplicationContext()
+                              );
+
+                      recognizer.setRecognitionListener(
+                              new RecognitionListener() {
+
+                                  @Override
+                                  public void onResults(
+                                          Bundle results
+                                  ) {
+
+                                      ArrayList<String> matches =
+                                              results.getStringArrayList(
+                                                      SpeechRecognizer
+                                                              .RESULTS_RECOGNITION
+                                              );
+
+                                      if (matches != null) {
+
+                                          for (String result :
+                                                  matches) {
+
+                                              String text =
+                                                      result
+                                                              .toLowerCase(
+                                                                      Locale.US
+                                                              )
+                                                              .trim();
+
+                                              if (
+                                                  text.contains(
+                                                          "hey myra"
+                                                  ) ||
+                                                  text.contains(
+                                                          "hey mira"
+                                                  )
+                                              ) {
+
+                                                  openMyra();
+
+                                                  break;
+                                              }
+                                          }
+                                      }
+
+                                      restartRecognition();
+                                  }
+
+                                  @Override
+                                  public void onError(
+                                          int error
+                                  ) {
+                                      restartRecognition();
+                                  }
+
+                                  @Override
+                                  public void onReadyForSpeech(
+                                          android.os.Bundle params
+                                  ) {}
+
+                                  @Override
+                                  public void onBeginningOfSpeech() {}
+
+                                  @Override
+                                  public void onRmsChanged(
+                                          float rmsdB
+                                  ) {}
+
+                                  @Override
+                                  public void onBufferReceived(
+                                          byte[] buffer
+                                  ) {}
+
+                                  @Override
+                                  public void onEndOfSpeech() {}
+
+                                  @Override
+                                  public void onPartialResults(
+                                          android.os.Bundle partialResults
+                                  ) {}
+
+                                  @Override
+                                  public void onEvent(
+                                          int eventType,
+                                          android.os.Bundle params
+                                  ) {}
+                              }
+                      );
+
+                      Intent intent =
+                              new Intent(
+                                      RecognizerIntent
+                                              .ACTION_RECOGNIZE_SPEECH
+                              );
+
+                      intent.putExtra(
+                              RecognizerIntent
+                                      .EXTRA_LANGUAGE_MODEL,
+                              RecognizerIntent
+                                      .LANGUAGE_MODEL_FREE_FORM
+                      );
+
+                      intent.putExtra(
+                              RecognizerIntent.EXTRA_LANGUAGE,
+                              Locale.US.toLanguageTag()
+                      );
+
+                      intent.putExtra(
+                              RecognizerIntent.EXTRA_PARTIAL_RESULTS,
+                              true
+                      );
+
+                      recognizer.startListening(intent);
+
+                  } catch (Exception e) {
+                      restartRecognition();
+                  }
+              }
+
+              private void restartRecognition() {
+
+                  if (!running) {
+                      return;
+                  }
+
+                  new android.os.Handler(
+                          android.os.Looper.getMainLooper()
+                  ).postDelayed(
+                          this::startRecognition,
+                          1200
+                  );
+              }
+
+              private void openMyra() {
+
+                  Intent intent =
+                          new Intent(
+                                  getApplicationContext(),
+                                  MainActivity.class
+                          );
+
+                  intent.addFlags(
+                          Intent.FLAG_ACTIVITY_NEW_TASK |
+                          Intent.FLAG_ACTIVITY_SINGLE_TOP |
+                          Intent.FLAG_ACTIVITY_CLEAR_TOP
+                  );
+
+                  intent.putExtra(
+                          "MYRA_WAKE",
+                          true
+                  );
+
+                  getApplicationContext()
+                          .startActivity(intent);
+              }
+
+              private Notification createNotification() {
+
+                  Intent intent =
+                          new Intent(
+                                  this,
+                                  MainActivity.class
+                          );
+
+                  PendingIntent pendingIntent =
+                          PendingIntent.getActivity(
+                                  this,
+                                  0,
+                                  intent,
+                                  PendingIntent.FLAG_IMMUTABLE |
+                                  PendingIntent.FLAG_UPDATE_CURRENT
+                          );
+
+                  return new Notification.Builder(
+                          this,
+                          CHANNEL_ID
+                  )
+                          .setContentTitle("MYRA AI")
+                          .setContentText(
+                                  "Hey Myra is ready"
+                          )
+                          .setSmallIcon(
+                                  android.R.drawable.ic_btn_speak_now
+                          )
+                          .setContentIntent(
+                                  pendingIntent
+                          )
+                          .setOngoing(true)
+                          .build();
+              }
+
+              private void createNotificationChannel() {
+
+                  if (Build.VERSION.SDK_INT >= 26) {
+
+                      NotificationChannel channel =
+                              new NotificationChannel(
+                                      CHANNEL_ID,
+                                      "MYRA Voice Assistant",
+                                      NotificationManager
+                                              .IMPORTANCE_LOW
+                              );
+
+                      NotificationManager manager =
+                              getSystemService(
+                                      NotificationManager.class
+                              );
+
+                      if (manager != null) {
+                          manager.createNotificationChannel(
+                                  channel
+                          );
+                      }
+                  }
+              }
+
+              @Override
+              public int onStartCommand(
+                      Intent intent,
+                      int flags,
+                      int startId
+              ) {
+
+                  running = true;
+
+                  return START_STICKY;
+              }
+
+              @Override
+              public void onDestroy() {
+
+                  running = false;
+
+                  if (recognizer != null) {
+                      recognizer.destroy();
+                      recognizer = null;
+                  }
+
+                  super.onDestroy();
+              }
+
+              @Override
+              public IBinder onBind(Intent intent) {
+                  return null;
+              }
+          }
+          EOF
+
       - name: Configure MYRA MainActivity
         run: |
           cat > android/app/src/main/java/com/myra/ai/MainActivity.java <<'EOF'
           package com.myra.ai;
 
-          import android.Manifest;
-          import android.content.pm.PackageManager;
+          import android.content.Intent;
           import android.os.Bundle;
-          import android.webkit.PermissionRequest;
-          import android.webkit.WebChromeClient;
 
           import com.getcapacitor.BridgeActivity;
 
@@ -405,87 +685,88 @@ jobs:
                           savedInstanceState
                   );
 
-                  if (getBridge() != null &&
-                      getBridge().getWebView() != null) {
+                  startMyraWakeService();
 
-                      getBridge()
-                              .getWebView()
-                              .setWebChromeClient(
-                                      new WebChromeClient() {
+                  handleWakeIntent(
+                          getIntent()
+                  );
+              }
 
-                                          @Override
-                                          public void onPermissionRequest(
-                                                  final PermissionRequest request
-                                          ) {
+              @Override
+              protected void onNewIntent(
+                      Intent intent
+              ) {
 
-                                              runOnUiThread(
-                                                      () -> {
+                  super.onNewIntent(intent);
 
-                                                          boolean microphoneGranted =
-                                                                  getApplicationContext()
-                                                                          .checkSelfPermission(
-                                                                                  Manifest.permission.RECORD_AUDIO
-                                                                          ) ==
-                                                                  PackageManager.PERMISSION_GRANTED;
+                  setIntent(intent);
 
-                                                          boolean audioRequested =
-                                                                  false;
+                  handleWakeIntent(intent);
+              }
 
-                                                          if (request.getResources() != null) {
+              private void startMyraWakeService() {
 
-                                                              for (String resource :
-                                                                      request.getResources()) {
+                  try {
 
-                                                                  if (
-                                                                      PermissionRequest
-                                                                          .RESOURCE_AUDIO_CAPTURE
-                                                                          .equals(resource)
-                                                                  ) {
-
-                                                                      audioRequested =
-                                                                              true;
-
-                                                                      break;
-                                                                  }
-                                                              }
-                                                          }
-
-                                                          String origin =
-                                                                  request.getOrigin() == null
-                                                                          ? ""
-                                                                          : request.getOrigin()
-                                                                                  .toString();
-
-                                                          boolean localOrigin =
-                                                                  origin.startsWith(
-                                                                          "https://localhost"
-                                                                  ) ||
-                                                                  origin.startsWith(
-                                                                          "http://localhost"
-                                                                  );
-
-                                                          if (
-                                                              microphoneGranted &&
-                                                              audioRequested &&
-                                                              localOrigin
-                                                          ) {
-
-                                                              request.grant(
-                                                                      new String[]{
-                                                                              PermissionRequest
-                                                                                      .RESOURCE_AUDIO_CAPTURE
-                                                                      }
-                                                              );
-
-                                                          } else {
-
-                                                              request.deny();
-                                                          }
-                                                      }
-                                              );
-                                          }
-                                      }
+                      Intent serviceIntent =
+                              new Intent(
+                                      this,
+                                      MyraWakeService.class
                               );
+
+                      if (
+                          android.os.Build.VERSION.SDK_INT >= 26
+                      ) {
+
+                          startForegroundService(
+                                  serviceIntent
+                          );
+
+                      } else {
+
+                          startService(
+                                  serviceIntent
+                          );
+                      }
+
+                  } catch (Exception e) {
+                      e.printStackTrace();
+                  }
+              }
+
+              private void handleWakeIntent(
+                      Intent intent
+              ) {
+
+                  if (
+                      intent != null &&
+                      intent.getBooleanExtra(
+                              "MYRA_WAKE",
+                              false
+                      )
+                  ) {
+
+                      getWindow()
+                              .getDecorView()
+                              .postDelayed(
+                                      () -> {
+
+                                          if (getBridge() != null &&
+                                              getBridge().getWebView() != null) {
+
+                                              getBridge()
+                                                      .getWebView()
+                                                      .evaluateJavascript(
+                                                              "window.dispatchEvent(new Event('myra-wake'));",
+                                                              null
+                                                      );
+                                          }
+
+                                      },
+                                      900
+                              );
+
+                      intent.removeExtra("MYRA_WAKE");
                   }
               }
           }
