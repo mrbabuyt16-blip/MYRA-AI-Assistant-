@@ -1,159 +1,120 @@
 import React, { useEffect, useRef, useState } from "react";
 
-/* ================= GEMINI ================= */
+const GEMINI_MODEL = "gemini-3.6-flash";
 
-const GEMINI_MODEL = "gemini-2.5-flash";
-
-function getGeminiUrl() {
-  return `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
-}
-
-/* ================= STORAGE ================= */
-
-function loadJSON(key, fallback) {
-  try {
-    const value = localStorage.getItem(key);
-    return value ? JSON.parse(value) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-/* ================= HELPERS ================= */
-
-function normalize(text) {
-  return text
-    .toLowerCase()
-    .replace(/[।?!,]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/* ================= APP ================= */
-
-export default function App() {
-  const [tab, setTab] = useState("myra");
-  const [settingsPage, setSettingsPage] = useState(null);
+function App() {
+  const [tab, setTab] = useState("home");
+  const [settingsPage, setSettingsPage] = useState(false);
 
   const [input, setInput] = useState("");
   const [thinking, setThinking] = useState(false);
   const [listening, setListening] = useState(false);
 
-  const [messages, setMessages] = useState(() =>
-    loadJSON("myra_messages", [
-      {
-        role: "assistant",
-        text: "Hello! I'm MYRA. How can I help you today?",
-      },
-    ])
-  );
+  const [messages, setMessages] = useState([
+    {
+      role: "assistant",
+      text: "Hello! I'm Myra. How can I help you today?",
+    },
+  ]);
 
   const [apiKey, setApiKey] = useState(
-    localStorage.getItem("myra_gemini_key") || ""
+    () => localStorage.getItem("myra_gemini_key") || ""
   );
 
   const [connected, setConnected] = useState(
-    !!localStorage.getItem("myra_gemini_key")
+    () => Boolean(localStorage.getItem("myra_gemini_key"))
   );
 
-  const [voiceEnabled, setVoiceEnabled] = useState(
-    localStorage.getItem("myra_voice") !== "false"
-  );
-
-  const [language, setLanguage] = useState(
-    localStorage.getItem("myra_language") || "Follow phone"
-  );
-
-  const [memories, setMemories] = useState(() =>
-    loadJSON("myra_memories", [])
-  );
-
-  const [tasks, setTasks] = useState(() =>
-    loadJSON("myra_tasks", [
-      {
-        id: 1,
-        title: "Study session",
-        time: "7:00 PM",
-        done: false,
-      },
-      {
-        id: 2,
-        title: "Review today's notes",
-        time: "9:00 PM",
-        done: false,
-      },
-    ])
-  );
-
-  const [history, setHistory] = useState(() =>
-    loadJSON("myra_history", [])
-  );
-
-  const [memorySearch, setMemorySearch] = useState("");
-  const [historySearch, setHistorySearch] = useState("");
+  const [voice, setVoice] = useState(true);
+  const [language, setLanguage] = useState("English");
 
   const recognitionRef = useRef(null);
-  const messagesEndRef = useRef(null);
-
-  /* ================= SAVE ================= */
 
   useEffect(() => {
-    localStorage.setItem(
-      "myra_messages",
-      JSON.stringify(messages)
+    return () => {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch {}
+      }
+    };
+  }, []);
+
+  // -----------------------------
+  // PERMISSIONS
+  // -----------------------------
+
+  const requestMicrophonePermission = async () => {
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        alert("Microphone is not supported on this device.");
+        return false;
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+      });
+
+      stream.getTracks().forEach((track) => track.stop());
+
+      return true;
+    } catch (error) {
+      console.error("Microphone permission error:", error);
+
+      alert(
+        "Microphone permission is required.\n\nPlease tap Allow when Android asks."
+      );
+
+      return false;
+    }
+  };
+
+  const requestNotificationPermission = async () => {
+    try {
+      if (!("Notification" in window)) {
+        alert("Notification permission is not supported here.");
+        return false;
+      }
+
+      if (Notification.permission === "granted") {
+        return true;
+      }
+
+      if (Notification.permission === "default") {
+        const result = await Notification.requestPermission();
+        return result === "granted";
+      }
+
+      alert(
+        "Notification permission is blocked.\n\nOpen Android Settings → Apps → MYRA AI → Notifications."
+      );
+
+      return false;
+    } catch (error) {
+      console.error("Notification permission error:", error);
+      return false;
+    }
+  };
+
+  const requestAllUsefulPermissions = async () => {
+    await requestMicrophonePermission();
+    await requestNotificationPermission();
+
+    alert(
+      "Permission request completed.\n\nAndroid will only show permissions that MYRA is allowed to request."
     );
-  }, [messages]);
+  };
 
-  useEffect(() => {
-    localStorage.setItem(
-      "myra_memories",
-      JSON.stringify(memories)
-    );
-  }, [memories]);
-
-  useEffect(() => {
-    localStorage.setItem(
-      "myra_tasks",
-      JSON.stringify(tasks)
-    );
-  }, [tasks]);
-
-  useEffect(() => {
-    localStorage.setItem(
-      "myra_history",
-      JSON.stringify(history)
-    );
-  }, [history]);
-
-  useEffect(() => {
-    localStorage.setItem(
-      "myra_voice",
-      String(voiceEnabled)
-    );
-  }, [voiceEnabled]);
-
-  useEffect(() => {
-    localStorage.setItem(
-      "myra_language",
-      language
-    );
-  }, [language]);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({
-      behavior: "smooth",
-    });
-  }, [messages, thinking]);
-
-  /* ================= API KEY ================= */
+  // -----------------------------
+  // GEMINI
+  // -----------------------------
 
   const saveApiKey = () => {
     const key = apiKey.trim();
 
     if (!key) {
-      setConnected(false);
       localStorage.removeItem("myra_gemini_key");
-
+      setConnected(false);
       alert("Please paste your Gemini API key.");
       return;
     }
@@ -167,156 +128,208 @@ export default function App() {
 
   const disconnectApi = () => {
     localStorage.removeItem("myra_gemini_key");
-
     setApiKey("");
     setConnected(false);
 
-    alert("Gemini disconnected.");
+    alert("Gemini API disconnected.");
   };
 
-  /* ================= VOICE OUTPUT ================= */
+  const getGeminiUrl = () => {
+    return `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+  };
+
+  // -----------------------------
+  // VOICE OUTPUT
+  // -----------------------------
 
   const speak = (text) => {
-    if (!voiceEnabled) return;
+    if (!voice || !("speechSynthesis" in window)) return;
 
-    if (!("speechSynthesis" in window)) {
+    try {
+      window.speechSynthesis.cancel();
+
+      const utterance = new SpeechSynthesisUtterance(text);
+
+      utterance.lang =
+        language === "Bangla" ? "bn-BD" : "en-US";
+
+      utterance.rate = 0.95;
+      utterance.pitch = 1;
+
+      window.speechSynthesis.speak(utterance);
+    } catch (error) {
+      console.error("Speech error:", error);
+    }
+  };
+
+  // -----------------------------
+  // VOICE INPUT
+  // -----------------------------
+
+  const startListening = async () => {
+    const microphoneAllowed =
+      await requestMicrophonePermission();
+
+    if (!microphoneAllowed) {
       return;
     }
 
-    window.speechSynthesis.cancel();
+    const SpeechRecognition =
+      window.SpeechRecognition ||
+      window.webkitSpeechRecognition;
 
-    const cleanText = String(text)
-      .replace(/[*#`]/g, "")
-      .trim();
-
-    if (!cleanText) return;
-
-    const utterance =
-      new SpeechSynthesisUtterance(cleanText);
-
-    if (language === "Bangla") {
-      utterance.lang = "bn-BD";
-    } else if (language === "English") {
-      utterance.lang = "en-US";
-    } else {
-      utterance.lang =
-        navigator.language || "en-US";
+    if (!SpeechRecognition) {
+      alert(
+        "Voice recognition is not supported on this device/browser."
+      );
+      return;
     }
 
-    utterance.rate = 1;
-    utterance.pitch = 1;
-    utterance.volume = 1;
+    try {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch {}
+      }
 
-    window.speechSynthesis.speak(utterance);
+      const recognition = new SpeechRecognition();
+
+      recognition.lang =
+        language === "Bangla" ? "bn-BD" : "en-US";
+
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+
+      recognition.onstart = () => {
+        setListening(true);
+      };
+
+      recognition.onresult = (event) => {
+        const text =
+          event?.results?.[0]?.[0]?.transcript || "";
+
+        if (text.trim()) {
+          setInput(text.trim());
+        }
+      };
+
+      recognition.onerror = (event) => {
+        console.error(
+          "Speech recognition error:",
+          event.error
+        );
+
+        setListening(false);
+
+        if (event.error === "not-allowed") {
+          alert(
+            "Microphone permission was denied. Please allow Microphone permission from Android Settings."
+          );
+        }
+      };
+
+      recognition.onend = () => {
+        setListening(false);
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (error) {
+      console.error(error);
+      setListening(false);
+    }
   };
 
-  /* ================= PHONE ================= */
+  // -----------------------------
+  // CALL
+  // -----------------------------
 
-  const makeCall = (phone) => {
-    const number = phone.trim();
+  const makeCall = (number) => {
+    const cleanNumber = String(number || "").replace(
+      /[^0-9+]/g,
+      ""
+    );
 
-    if (!number) {
-      addAssistant(
-        "Please enter a phone number first."
-      );
+    if (!cleanNumber) {
+      alert("Please provide a phone number.");
       return;
     }
 
     window.location.href = `tel:${encodeURIComponent(
-      number
+      cleanNumber
     )}`;
   };
 
-  /* ================= SMS ================= */
+  // -----------------------------
+  // SMS
+  // -----------------------------
 
-  const openSms = (phone, message) => {
-    const number = phone.trim();
+  const openSms = (number, body = "") => {
+    const cleanNumber = String(number || "").replace(
+      /[^0-9+]/g,
+      ""
+    );
 
-    if (!number) {
-      addAssistant(
-        "Please enter the recipient phone number first."
-      );
+    if (!cleanNumber) {
+      alert("Please provide a phone number.");
       return;
     }
 
-    const body = encodeURIComponent(
-      message || ""
-    );
+    const encodedBody = encodeURIComponent(body);
 
     window.location.href =
-      `sms:${encodeURIComponent(number)}?body=${body}`;
+      `sms:${encodeURIComponent(cleanNumber)}` +
+      `?body=${encodedBody}`;
   };
 
-  /* ================= MESSAGE ================= */
+  // -----------------------------
+  // COMMAND PROCESSING
+  // -----------------------------
 
-  const addAssistant = (text, shouldSpeak = true) => {
-    setMessages((prev) => [
-      ...prev,
-      {
-        role: "assistant",
-        text,
-        time: new Date().toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
-      },
-    ]);
+  const processCommand = (command) => {
+    const text = command.trim();
 
-    if (shouldSpeak) {
-      speak(text);
-    }
-  };
+    if (!text) return false;
 
-  /* ================= DEVICE COMMANDS ================= */
+    const lower = text.toLowerCase();
 
-  const processCommand = (text) => {
-    const command = normalize(text);
-
-    /* CALL */
-
+    // CALL
     if (
-      command.startsWith("call ") ||
-      command.startsWith("কল ") ||
-      command.startsWith("ফোন ")
+      lower.startsWith("call ") ||
+      lower.startsWith("কল ") ||
+      lower.startsWith("phone ") ||
+      lower.startsWith("ফোন ")
     ) {
-      const phone = text
-        .replace(/^call\s*/i, "")
-        .replace(/^কল\s*/i, "")
-        .replace(/^ফোন\s*/i, "")
-        .replace(/করো?/gi, "")
-        .trim();
-
-      if (/^[+0-9\s-]{6,}$/.test(phone)) {
-        addAssistant(
-          `Opening phone dialer for ${phone}...`,
-          false
-        );
-
-        setTimeout(() => {
-          makeCall(phone);
-        }, 300);
-
-        return true;
-      }
-
-      addAssistant(
-        "Call করতে contact name নয়, phone number দিতে হবে। উদাহরণ: Call 01712345678"
+      const number = text.replace(
+        /^(call|কল|phone|ফোন)\s*/i,
+        ""
       );
+
+      if (/[0-9+]{6,}/.test(number)) {
+        makeCall(number);
+        addAssistant(
+          "Opening the phone dialer for you."
+        );
+      } else {
+        addAssistant(
+          "Please give me a valid phone number."
+        );
+      }
 
       return true;
     }
 
-    /* SMS */
-
+    // SMS
     if (
-      command.startsWith("sms ") ||
-      command.startsWith("send sms ") ||
-      command.startsWith("message ") ||
-      command.startsWith("মেসেজ ") ||
-      command.startsWith("এসএমএস ")
+      lower.startsWith("sms ") ||
+      lower.startsWith("send sms ") ||
+      lower.startsWith("message ") ||
+      lower.startsWith("মেসেজ ") ||
+      lower.startsWith("এসএমএস ")
     ) {
       addAssistant(
-        "SMS পাঠাতে নিচের SMS button ব্যবহার করো। MYRA সরাসরি SMS পাঠাবে না; তোমার ফোনের Messages app খুলবে।"
+        "I can open your Messages app with the number and message ready. You will need to press Send yourself."
       );
 
       return true;
@@ -325,30 +338,49 @@ export default function App() {
     return false;
   };
 
-  /* ================= GEMINI ================= */
+  // -----------------------------
+  // MESSAGE HELPERS
+  // -----------------------------
 
-  const sendMessage = async (customText) => {
-    const text = (customText ?? input).trim();
-
-    if (!text || thinking) return;
-
-    setInput("");
-
+  const addUser = (text) => {
     setMessages((prev) => [
       ...prev,
       {
         role: "user",
         text,
-        time: new Date().toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
+      },
+    ]);
+  };
+
+  const addAssistant = (text) => {
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: "assistant",
+        text,
       },
     ]);
 
-    const commandHandled = processCommand(text);
+    speak(text);
+  };
 
-    if (commandHandled) {
+  // -----------------------------
+  // SEND MESSAGE
+  // -----------------------------
+
+  const sendMessage = async (customText = null) => {
+    const text = (
+      customText !== null ? customText : input
+    ).trim();
+
+    if (!text || thinking) return;
+
+    setInput("");
+    addUser(text);
+
+    const handled = processCommand(text);
+
+    if (handled) {
       return;
     }
 
@@ -358,37 +390,32 @@ export default function App() {
 
     if (!key) {
       addAssistant(
-        "Gemini API key সেট করা নেই। Settings → AI Key এ গিয়ে key paste করে Save & Connect চাপো।"
+        "Gemini is not connected yet. Open Settings and add your Gemini API key."
       );
-
       return;
     }
 
     setThinking(true);
 
     try {
-      const recentMessages = [
-        ...messages,
-        {
-          role: "user",
-          text,
-        },
-      ].slice(-12);
+      const recentMessages = [...messages, {
+        role: "user",
+        text,
+      }];
 
-      const contents = recentMessages.map(
-        (item) => ({
+      const contents = recentMessages
+        .slice(-12)
+        .map((message) => ({
           role:
-            item.role === "assistant"
-              ? "model"
-              : "user",
-
+            message.role === "user"
+              ? "user"
+              : "model",
           parts: [
             {
-              text: item.text,
+              text: message.text,
             },
           ],
-        })
-      );
+        }));
 
       const response = await fetch(
         `${getGeminiUrl()}?key=${encodeURIComponent(
@@ -396,17 +423,18 @@ export default function App() {
         )}`,
         {
           method: "POST",
-
           headers: {
             "Content-Type": "application/json",
           },
-
           body: JSON.stringify({
             systemInstruction: {
               parts: [
                 {
                   text:
-                    "You are MYRA, a helpful AI assistant. Give clear, useful and natural answers. If the user speaks Bangla, reply in Bangla. If the user speaks English, reply in English. Keep answers concise unless more detail is requested.",
+                    "You are MYRA, a helpful AI assistant. " +
+                    "If the user speaks Bangla, reply naturally in Bangla. " +
+                    "If the user speaks English, reply naturally in English. " +
+                    "Be friendly, useful and concise unless more detail is requested.",
                 },
               ],
             },
@@ -415,19 +443,28 @@ export default function App() {
 
             generationConfig: {
               temperature: 0.7,
-              maxOutputTokens: 1000,
+              maxOutputTokens: 1200,
             },
           }),
         }
       );
 
-      const data = await response.json();
+      let data = null;
+
+      try {
+        data = await response.json();
+      } catch {
+        throw new Error(
+          `HTTP ${response.status}`
+        );
+      }
 
       if (!response.ok) {
-        throw new Error(
+        const apiMessage =
           data?.error?.message ||
-            `Gemini API error: ${response.status}`
-        );
+          `Gemini request failed with HTTP ${response.status}.`;
+
+        throw new Error(apiMessage);
       }
 
       const answer =
@@ -442,348 +479,332 @@ export default function App() {
         );
       }
 
-      addAssistant(answer);
-
-      setHistory((prev) => [
-        {
-          id: Date.now(),
-          text,
-          answer,
-          time: new Date().toLocaleString(),
-        },
-        ...prev,
-      ]);
-
       setConnected(true);
+      addAssistant(answer);
     } catch (error) {
-      console.error("MYRA Gemini:", error);
+      console.error("Gemini error:", error);
 
       const message =
-        error?.message || "Unknown error";
+        error?.message || "Unknown connection error.";
 
       addAssistant(
         `Gemini connection failed.\n\n${message}\n\nCheck your API key, internet connection and Gemini API access.`
       );
-
-      setConnected(false);
     } finally {
       setThinking(false);
     }
   };
 
-  /* ================= VOICE INPUT ================= */
+  // -----------------------------
+  // QUICK ACTIONS
+  // -----------------------------
 
-  const startVoice = () => {
-    const SpeechRecognition =
-      window.SpeechRecognition ||
-      window.webkitSpeechRecognition;
-
-    if (!SpeechRecognition) {
-      addAssistant(
-        "Voice recognition is not supported on this device."
-      );
-      return;
-    }
-
-    if (listening) {
-      recognitionRef.current?.stop();
-      setListening(false);
-      return;
-    }
-
-    const recognition =
-      new SpeechRecognition();
-
-    recognition.lang =
-      language === "Bangla"
-        ? "bn-BD"
-        : language === "English"
-        ? "en-US"
-        : navigator.language || "en-US";
-
-    recognition.continuous = false;
-    recognition.interimResults = false;
-
-    recognition.onstart = () => {
-      setListening(true);
-    };
-
-    recognition.onresult = (event) => {
-      const transcript =
-        event.results[0][0].transcript;
-
-      setListening(false);
-      setInput("");
-
-      sendMessage(transcript);
-    };
-
-    recognition.onerror = () => {
-      setListening(false);
-    };
-
-    recognition.onend = () => {
-      setListening(false);
-    };
-
-    recognitionRef.current = recognition;
-
-    try {
-      recognition.start();
-    } catch {
-      setListening(false);
-    }
+  const quickAsk = (text) => {
+    setTab("chat");
+    setTimeout(() => {
+      sendMessage(text);
+    }, 50);
   };
 
-  /* ================= MEMORY ================= */
+  // -----------------------------
+  // SETTINGS
+  // -----------------------------
 
-  const addMemory = () => {
-    const value = window.prompt(
-      "What should MYRA remember?"
-    );
+  const Settings = () => (
+    <div className="screen settings-screen">
+      <div className="myra-header">
+        <button
+          className="icon-btn"
+          onClick={() => {
+            setSettingsPage(false);
+            setTab("home");
+          }}
+        >
+          ←
+        </button>
 
-    if (!value?.trim()) return;
-
-    setMemories((prev) => [
-      {
-        id: Date.now(),
-        text: value.trim(),
-        time: new Date().toLocaleString(),
-      },
-      ...prev,
-    ]);
-  };
-
-  const deleteMemory = (id) => {
-    setMemories((prev) =>
-      prev.filter((item) => item.id !== id)
-    );
-  };
-
-  const exportMemory = () => {
-    const blob = new Blob(
-      [JSON.stringify(memories, null, 2)],
-      {
-        type: "application/json",
-      }
-    );
-
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-
-    a.href = url;
-    a.download = "myra-memory.json";
-    a.click();
-
-    URL.revokeObjectURL(url);
-  };
-
-  /* ================= TASKS ================= */
-
-  const toggleTask = (id) => {
-    setTasks((prev) =>
-      prev.map((task) =>
-        task.id === id
-          ? {
-              ...task,
-              done: !task.done,
-            }
-          : task
-      )
-    );
-  };
-
-  /* ================= HISTORY ================= */
-
-  const clearHistory = () => {
-    if (
-      window.confirm(
-        "Delete all MYRA history?"
-      )
-    ) {
-      setHistory([]);
-    }
-  };
-
-  /* ================= HEADER ================= */
-
-  const Header = ({
-    title,
-    back = false,
-  }) => (
-    <header className="myra-header">
-      <div className="brand-small">
-        <div className="brand-dot" />
-
-        <div>
-          <strong>{title}</strong>
-          <span>MYRA AI</span>
+        <div className="brand-small">
+          <span className="brand-dot" />
+          MYRA
         </div>
+
+        <div />
       </div>
 
-      <button
-        className="icon-btn"
-        onClick={() => {
-          if (back) {
-            setSettingsPage(null);
-          } else {
-            setTab("settings");
-            setSettingsPage(null);
-          }
-        }}
-      >
-        {back ? "←" : "⚙"}
-      </button>
-    </header>
-  );
+      <div className="settings-content">
+        <h1>Settings</h1>
 
-  /* ================= HOME ================= */
+        <p className="settings-subtitle">
+          Customize your MYRA AI assistant
+        </p>
 
-  const renderHome = () => (
-    <section className="screen myra-screen">
-      <Header title="MYRA AI" />
+        <div className="setting-card">
+          <div className="setting-title">
+            Gemini AI
+          </div>
 
-      <div className="hero-area">
-        <div
-          className={`myra-orb ${
-            listening ? "orb-listening" : ""
-          } ${thinking ? "orb-thinking" : ""}`}
-        >
-          <div className="orb-ring ring-one" />
-          <div className="orb-ring ring-two" />
-          <div className="orb-ring ring-three" />
+          <div className="setting-description">
+            Add your Gemini API key to connect MYRA with AI.
+          </div>
 
-          <div className="orb-core">
-            <span>MYRA</span>
+          <input
+            className="setting-input"
+            type="password"
+            value={apiKey}
+            onChange={(e) =>
+              setApiKey(e.target.value)
+            }
+            placeholder="Paste Gemini API key"
+            autoComplete="off"
+          />
+
+          <div className="connection-status">
+            <span
+              className={
+                connected
+                  ? "status-blue"
+                  : "status-off"
+              }
+            />
+            {connected
+              ? "Gemini connected"
+              : "Gemini not connected"}
+          </div>
+
+          <button
+            className="connect-button"
+            onClick={saveApiKey}
+          >
+            Save & Connect
+          </button>
+
+          {connected && (
+            <button
+              className="disconnect-button"
+              onClick={disconnectApi}
+            >
+              Disconnect
+            </button>
+          )}
+        </div>
+
+        <div className="setting-card">
+          <div className="setting-title">
+            🔐 Android Permissions
+          </div>
+
+          <div className="setting-description">
+            Allow MYRA to use the microphone and notifications
+            when Android asks.
+          </div>
+
+          <button
+            className="wide-button"
+            onClick={
+              requestAllUsefulPermissions
+            }
+          >
+            Allow MYRA Permissions
+          </button>
+
+          <div className="note">
+            Android controls which permissions are available
+            and whether they can be granted.
           </div>
         </div>
 
-        <div className="greeting">
-          <h1>Good Evening.</h1>
+        <div className="setting-card">
+          <div className="setting-title">
+            🎤 Voice
+          </div>
 
-          <p>
-            {listening
-              ? "I'm listening..."
-              : thinking
-              ? "Thinking..."
-              : "How can I help you today?"}
-          </p>
+          <div className="toggle-card">
+            <span>
+              Voice replies
+            </span>
+
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={voice}
+                onChange={(e) =>
+                  setVoice(e.target.checked)
+                }
+              />
+              <span />
+            </label>
+          </div>
+        </div>
+
+        <div className="setting-card">
+          <div className="setting-title">
+            🌐 Language
+          </div>
+
+          <div className="language-pills">
+            <button
+              className={
+                language === "English"
+                  ? "selected"
+                  : ""
+              }
+              onClick={() =>
+                setLanguage("English")
+              }
+            >
+              English
+            </button>
+
+            <button
+              className={
+                language === "Bangla"
+                  ? "selected"
+                  : ""
+              }
+              onClick={() =>
+                setLanguage("Bangla")
+              }
+            >
+              বাংলা
+            </button>
+          </div>
+        </div>
+
+        <div className="setting-card">
+          <div className="setting-title">
+            📱 MYRA AI
+          </div>
+
+          <div className="setting-description">
+            Version 1.0
+          </div>
+
+          <div className="note">
+            MYRA AI Assistant
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  // -----------------------------
+  // HOME
+  // -----------------------------
+
+  const Home = () => (
+    <div className="screen">
+      <div className="myra-header">
+        <div className="brand-small">
+          <span className="brand-dot" />
+          MYRA
+        </div>
+
+        <button
+          className="icon-btn"
+          onClick={() => {
+            setSettingsPage(true);
+            setTab("settings");
+          }}
+        >
+          ⚙
+        </button>
+      </div>
+
+      <div className="hero-area">
+        <div className="myra-orb">
+          <div className="orb-ring" />
+          <div className="orb-core">
+            M
+          </div>
+        </div>
+
+        <h1 className="greeting">
+          Hello! I'm Myra
+        </h1>
+
+        <p>
+          Your personal AI assistant
+        </p>
+
+        <div className="connection-status hero-status">
+          <span
+            className={
+              connected
+                ? "status-blue"
+                : "status-off"
+            }
+          />
+          {connected
+            ? "AI Connected"
+            : "AI Ready"}
         </div>
       </div>
 
       <div className="quick-row">
         <button
-          onClick={() =>
-            sendMessage(
-              "Give me a short helpful daily brief."
-            )
-          }
-        >
-          ✦ Brief
-        </button>
-
-        <button
-          onClick={() =>
-            sendMessage(
-              "What should I focus on today?"
-            )
-          }
-        >
-          ◇ Focus
-        </button>
-
-        <button
-          onClick={() =>
-            setMessages([
-              {
-                role: "assistant",
-                text:
-                  "New conversation started. I'm ready.",
-              },
-            ])
-          }
-        >
-          ＋ New
-        </button>
-      </div>
-
-      <div className="command-actions">
-        <button
           className="command-action"
           onClick={() =>
-            addAssistant(
-              "Call command: type Call followed by a phone number. Example: Call 01712345678"
-            )
+            quickAsk("Tell me something interesting.")
           }
         >
-          📞 Call
+          ✨
+          <span>Ask</span>
         </button>
 
         <button
           className="command-action"
           onClick={() =>
-            addAssistant(
-              "SMS: enter a phone number and message below, then MYRA will open your Messages app."
+            quickAsk(
+              language === "Bangla"
+                ? "আজকের জন্য আমাকে একটি ভালো পরামর্শ দাও।"
+                : "Give me a useful tip for today."
             )
           }
         >
-          💬 SMS
+          💡
+          <span>Tips</span>
         </button>
 
         <button
           className="command-action"
-          onClick={() =>
-            addAssistant(
-              "You can ask MYRA anything through Gemini."
-            )
-          }
+          onClick={startListening}
         >
-          🤖 AI
+          🎤
+          <span>Voice</span>
         </button>
       </div>
 
       <div className="compact-chat">
-        {messages.slice(-6).map(
-          (message, index) => (
-            <div
-              key={index}
-              className={`mini-message ${
-                message.role === "user"
-                  ? "user-mini"
-                  : "ai-mini"
-              }`}
-            >
-              <span>
-                {message.role === "user"
-                  ? "YOU"
-                  : "MYRA"}
-              </span>
-
-              <p>{message.text}</p>
-            </div>
-          )
-        )}
-
-        <div ref={messagesEndRef} />
+        {messages.slice(-4).map((message, index) => (
+          <div
+            key={index}
+            className={
+              message.role === "user"
+                ? "mini-message user-mini"
+                : "mini-message ai-mini"
+            }
+          >
+            <span>
+              {message.role === "user"
+                ? "You"
+                : "Myra"}
+            </span>
+            <p>{message.text}</p>
+          </div>
+        ))}
       </div>
 
       <div className="voice-control">
         <button
-          className={`mic-button ${
-            listening ? "active" : ""
-          }`}
-          onClick={startVoice}
+          className={
+            listening
+              ? "voice-button listening"
+              : "voice-button"
+          }
+          onClick={startListening}
         >
-          {listening ? "■" : "🎙"}
+          {listening ? "●" : "🎙️"}
         </button>
-
-        <span>
-          {listening
-            ? "Listening..."
-            : thinking
-            ? "Thinking..."
-            : "Tap to speak"}
-        </span>
       </div>
 
       <div className="text-input-wrap">
@@ -797,714 +818,179 @@ export default function App() {
               sendMessage();
             }
           }}
-          placeholder="Ask MYRA anything..."
+          placeholder={
+            listening
+              ? "Listening..."
+              : "Ask Myra anything..."
+          }
         />
 
         <button
           onClick={() => sendMessage()}
-          disabled={thinking}
+          disabled={
+            thinking || !input.trim()
+          }
         >
           ➤
         </button>
       </div>
-
-      {!connected && (
-        <button
-          className="key-warning"
-          onClick={() => {
-            setTab("settings");
-            setSettingsPage("key");
-          }}
-        >
-          ⚠ Connect Gemini API
-        </button>
-      )}
-    </section>
+    </div>
   );
 
-  /* ================= TODAY ================= */
+  // -----------------------------
+  // CHAT
+  // -----------------------------
 
-  const renderToday = () => (
-    <section className="screen">
-      <Header title="Today" />
-
-      <div className="page-title">
-        <span>MYRA DAILY</span>
-
-        <h1>
-          {new Date().toLocaleDateString(
-            undefined,
-            {
-              weekday: "long",
-            }
-          )}
-        </h1>
-
-        <p>
-          {new Date().toLocaleDateString(
-            undefined,
-            {
-              day: "numeric",
-              month: "long",
-              year: "numeric",
-            }
-          )}
-        </p>
-      </div>
-
-      <div className="today-card featured-card">
-        <span className="card-label">
-          MYRA BRIEF
-        </span>
-
-        <h2>Stay focused.</h2>
-
-        <p>
-          Complete your important tasks first,
-          then take some time to relax.
-        </p>
+  const Chat = () => (
+    <div className="screen chat-screen">
+      <div className="myra-header">
+        <div>
+          <div className="brand-small">
+            <span className="brand-dot" />
+            MYRA CHAT
+          </div>
+        </div>
 
         <button
+          className="icon-btn"
           onClick={() =>
-            sendMessage(
-              "Give me a short daily brief."
-            )
+            setMessages([
+              {
+                role: "assistant",
+                text:
+                  "Hello! I'm Myra. How can I help you today?",
+              },
+            ])
           }
         >
-          Generate brief →
+          🗑
         </button>
       </div>
 
-      <div className="section-head">
-        <h2>Tasks</h2>
-
-        <span>
-          {
-            tasks.filter(
-              (task) => !task.done
-            ).length
-          }{" "}
-          remaining
-        </span>
-      </div>
-
-      <div className="task-list">
-        {tasks.map((task) => (
-          <button
-            key={task.id}
-            className={`task-card ${
-              task.done
-                ? "task-done"
-                : ""
-            }`}
-            onClick={() =>
-              toggleTask(task.id)
+      <div className="chat-messages">
+        {messages.map((message, index) => (
+          <div
+            key={index}
+            className={
+              message.role === "user"
+                ? "chat-bubble user-bubble"
+                : "chat-bubble ai-bubble"
             }
           >
-            <span className="task-check">
-              {task.done ? "✓" : ""}
-            </span>
-
-            <div>
-              <strong>
-                {task.title}
-              </strong>
-
-              <small>
-                {task.time}
-              </small>
+            <div className="bubble-name">
+              {message.role === "user"
+                ? "You"
+                : "Myra"}
             </div>
-          </button>
+
+            <div className="bubble-text">
+              {message.text}
+            </div>
+          </div>
         ))}
+
+        {thinking && (
+          <div className="chat-bubble ai-bubble thinking">
+            Myra is thinking...
+          </div>
+        )}
       </div>
-    </section>
-  );
 
-  /* ================= MEMORY ================= */
-
-  const renderMemory = () => {
-    const filtered = memories.filter(
-      (item) =>
-        item.text
-          .toLowerCase()
-          .includes(
-            memorySearch.toLowerCase()
-          )
-    );
-
-    return (
-      <section className="screen">
-        <Header title="Memory" />
-
-        <div className="page-title">
-          <span>MYRA MEMORY</span>
-
-          <h1>Your memories.</h1>
-
-          <p>
-            Memories are stored locally on this
-            device.
-          </p>
-        </div>
-
-        <div className="search-box">
-          🔎
-
-          <input
-            value={memorySearch}
-            onChange={(e) =>
-              setMemorySearch(
-                e.target.value
-              )
-            }
-            placeholder="Search memory..."
-          />
-        </div>
-
-        <div className="memory-actions">
-          <button onClick={addMemory}>
-            ＋ Add
-          </button>
-
-          <button onClick={exportMemory}>
-            ↑ Export
-          </button>
-        </div>
-
-        <div className="memory-list">
-          {filtered.length === 0 ? (
-            <div className="empty-card">
-              <span>◎</span>
-
-              <strong>
-                No memories yet
-              </strong>
-            </div>
-          ) : (
-            filtered.map((item) => (
-              <div
-                className="memory-card"
-                key={item.id}
-              >
-                <div>
-                  <strong>
-                    {item.text}
-                  </strong>
-
-                  <small>
-                    {item.time}
-                  </small>
-                </div>
-
-                <button
-                  onClick={() =>
-                    deleteMemory(item.id)
-                  }
-                >
-                  ×
-                </button>
-              </div>
-            ))
-          )}
-        </div>
-      </section>
-    );
-  };
-
-  /* ================= SETTINGS ================= */
-
-  const renderSettings = () => {
-    if (settingsPage === "key") {
-      return (
-        <section className="screen">
-          <Header
-            title="AI Key"
-            back
-          />
-
-          <div className="page-title">
-            <span>AI CONNECTION</span>
-
-            <h1>Gemini AI</h1>
-
-            <p>
-              Connect MYRA to Google Gemini.
-            </p>
-          </div>
-
-          <div className="setting-card">
-            <div className="connection-status">
-              <span
-                className={
-                  connected
-                    ? "status-blue"
-                    : "status-off"
-                }
-              />
-
-              <div>
-                <strong>
-                  {connected
-                    ? "Gemini Connected"
-                    : "Not Connected"}
-                </strong>
-
-                <small>
-                  {connected
-                    ? "MYRA can use Gemini."
-                    : "Paste your API key below."}
-                </small>
-              </div>
-            </div>
-          </div>
-
-          <div className="setting-card">
-            <label>
-              Gemini API Key
-            </label>
-
-            <input
-              className="key-input"
-              type="password"
-              value={apiKey}
-              onChange={(e) =>
-                setApiKey(e.target.value)
-              }
-              placeholder="Paste Gemini API key"
-            />
-
-            <small>
-              The key is stored locally on this
-              device.
-            </small>
-
-            <button
-              className="connect-button"
-              onClick={saveApiKey}
-            >
-              🔵 Save & Connect
-            </button>
-
-            {connected && (
-              <button
-                className="disconnect-button"
-                onClick={disconnectApi}
-              >
-                Disconnect
-              </button>
-            )}
-          </div>
-
-          <div className="setting-card">
-            <strong>
-              Provider
-            </strong>
-
-            <div className="provider-grid">
-              <button className="selected">
-                Gemini
-              </button>
-
-              <button disabled>
-                OpenAI
-              </button>
-
-              <button disabled>
-                xAI Grok
-              </button>
-
-              <button disabled>
-                OpenRouter
-              </button>
-            </div>
-          </div>
-
-          <p className="note">
-            For a production app, API keys should
-            be handled by a secure backend.
-          </p>
-        </section>
-      );
-    }
-
-    if (settingsPage === "voice") {
-      return (
-        <section className="screen">
-          <Header
-            title="Voice"
-            back
-          />
-
-          <div className="page-title">
-            <span>VOICE</span>
-
-            <h1>Voice Control</h1>
-          </div>
-
-          <div className="toggle-card">
-            <div>
-              <strong>
-                MYRA Voice
-              </strong>
-
-              <small>
-                MYRA speaks AI answers.
-              </small>
-            </div>
-
-            <button
-              className={`switch ${
-                voiceEnabled
-                  ? "on"
-                  : ""
-              }`}
-              onClick={() =>
-                setVoiceEnabled(
-                  (value) => !value
-                )
-              }
-            >
-              <span />
-            </button>
-          </div>
-
-          <button
-            className="wide-button"
-            onClick={() =>
-              speak(
-                "Hello. I am MYRA. Voice is working."
-              )
-            }
-          >
-            🔊 Test MYRA Voice
-          </button>
-        </section>
-      );
-    }
-
-    if (settingsPage === "language") {
-      return (
-        <section className="screen">
-          <Header
-            title="Language"
-            back
-          />
-
-          <div className="page-title">
-            <span>LANGUAGE</span>
-
-            <h1>Language</h1>
-          </div>
-
-          <div className="language-pills">
-            {[
-              "Follow phone",
-              "English",
-              "Bangla",
-            ].map((item) => (
-              <button
-                key={item}
-                className={
-                  language === item
-                    ? "selected"
-                    : ""
-                }
-                onClick={() =>
-                  setLanguage(item)
-                }
-              >
-                {item}
-              </button>
-            ))}
-          </div>
-        </section>
-      );
-    }
-
-    if (settingsPage === "history") {
-      const filtered =
-        history.filter((item) =>
-          `${item.text} ${item.answer}`
-            .toLowerCase()
-            .includes(
-              historySearch.toLowerCase()
-            )
-        );
-
-      return (
-        <section className="screen">
-          <Header
-            title="History"
-            back
-          />
-
-          <div className="page-title">
-            <span>
-              CONVERSATIONS
-            </span>
-
-            <h1>History</h1>
-          </div>
-
-          <div className="search-box">
-            🔎
-
-            <input
-              value={historySearch}
-              onChange={(e) =>
-                setHistorySearch(
-                  e.target.value
-                )
-              }
-              placeholder="Search history..."
-            />
-          </div>
-
-          {filtered.map((item) => (
-            <div
-              className="history-card"
-              key={item.id}
-            >
-              <strong>
-                {item.text}
-              </strong>
-
-              <small>
-                {item.time}
-              </small>
-            </div>
-          ))}
-
-          {history.length > 0 && (
-            <button
-              className="danger-btn"
-              onClick={clearHistory}
-            >
-              Delete history
-            </button>
-          )}
-        </section>
-      );
-    }
-
-    return (
-      <section className="screen">
-        <Header title="Settings" />
-
-        <div className="page-title">
-          <span>MYRA CONTROL</span>
-
-          <h1>Settings</h1>
-        </div>
-
-        <div className="settings-list">
-          <button
-            onClick={() =>
-              setSettingsPage("key")
-            }
-          >
-            <span>⌘</span>
-
-            <div>
-              <strong>
-                AI Key & Connection
-              </strong>
-
-              <small>
-                {connected
-                  ? "🔵 Gemini connected"
-                  : "API key required"}
-              </small>
-            </div>
-
-            <b>›</b>
-          </button>
-
-          <button
-            onClick={() =>
-              setSettingsPage("voice")
-            }
-          >
-            <span>♫</span>
-
-            <div>
-              <strong>
-                Voice
-              </strong>
-
-              <small>
-                {voiceEnabled
-                  ? "Voice enabled"
-                  : "Voice disabled"}
-              </small>
-            </div>
-
-            <b>›</b>
-          </button>
-
-          <button
-            onClick={() =>
-              setSettingsPage("language")
-            }
-          >
-            <span>文</span>
-
-            <div>
-              <strong>
-                Language
-              </strong>
-
-              <small>
-                {language}
-              </small>
-            </div>
-
-            <b>›</b>
-          </button>
-
-          <button
-            onClick={() =>
-              setSettingsPage("history")
-            }
-          >
-            <span>◷</span>
-
-            <div>
-              <strong>
-                History
-              </strong>
-
-              <small>
-                {history.length} conversations
-              </small>
-            </div>
-
-            <b>›</b>
-          </button>
-        </div>
-      </section>
-    );
-  };
-
-  /* ================= SMS QUICK PANEL ================= */
-
-  const SmsPanel = () => {
-    const [phone, setPhone] = useState("");
-    const [message, setMessage] =
-      useState("");
-
-    return (
-      <div className="sms-panel">
-        <strong>💬 Send SMS</strong>
+      <div className="text-input-wrap chat-input">
+        <button
+          className="mic-mini"
+          onClick={startListening}
+        >
+          🎤
+        </button>
 
         <input
-          value={phone}
+          value={input}
           onChange={(e) =>
-            setPhone(e.target.value)
+            setInput(e.target.value)
           }
-          placeholder="Phone number"
-          inputMode="tel"
-        />
-
-        <textarea
-          value={message}
-          onChange={(e) =>
-            setMessage(e.target.value)
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              sendMessage();
+            }
+          }}
+          placeholder={
+            listening
+              ? "Listening..."
+              : "Message Myra..."
           }
-          placeholder="Message"
-          rows={3}
         />
 
         <button
-          onClick={() =>
-            openSms(phone, message)
+          onClick={() => sendMessage()}
+          disabled={
+            thinking || !input.trim()
           }
         >
-          Open Messages →
+          ➤
         </button>
       </div>
-    );
-  };
+    </div>
+  );
 
-  /* ================= MAIN ================= */
+  // -----------------------------
+  // MAIN RENDER
+  // -----------------------------
+
+  if (settingsPage) {
+    return (
+      <div className="myra-app">
+        <div className="app-shell">
+          <Settings />
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <main className="myra-app">
+    <div className="myra-app">
       <div className="app-shell">
-        {tab === "myra" &&
-          renderHome()}
+        {tab === "chat" ? <Chat /> : <Home />}
 
-        {tab === "today" &&
-          renderToday()}
-
-        {tab === "memory" &&
-          renderMemory()}
-
-        {tab === "settings" &&
-          renderSettings()}
-
-        <nav className="bottom-nav">
+        <div className="bottom-nav">
           <button
             className={
-              tab === "myra"
-                ? "active"
-                : ""
+              tab === "home" ? "active" : ""
             }
-            onClick={() => {
-              setTab("myra");
-              setSettingsPage(null);
-            }}
+            onClick={() => setTab("home")}
           >
-            <span>◉</span>
-            <small>MYRA</small>
+            🏠
+            <span>Home</span>
           </button>
 
           <button
             className={
-              tab === "today"
-                ? "active"
-                : ""
+              tab === "chat" ? "active" : ""
             }
-            onClick={() => {
-              setTab("today");
-              setSettingsPage(null);
-            }}
+            onClick={() => setTab("chat")}
           >
-            <span>▣</span>
-            <small>Today</small>
+            💬
+            <span>Chat</span>
           </button>
 
           <button
             className={
-              tab === "memory"
-                ? "active"
-                : ""
+              tab === "settings" ? "active" : ""
             }
             onClick={() => {
-              setTab("memory");
-              setSettingsPage(null);
-            }}
-          >
-            <span>♢</span>
-            <small>Memory</small>
-          </button>
-
-          <button
-            className={
-              tab === "settings"
-                ? "active"
-                : ""
-            }
-            onClick={() => {
+              setSettingsPage(true);
               setTab("settings");
-              setSettingsPage(null);
             }}
           >
-            <span>⚙</span>
-            <small>Settings</small>
+            ⚙️
+            <span>Settings</span>
           </button>
-        </nav>
+        </div>
       </div>
-    </main>
+    </div>
   );
-  }
+}
+
+export default App;
+
+[/code]
