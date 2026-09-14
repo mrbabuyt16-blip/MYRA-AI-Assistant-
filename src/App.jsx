@@ -1,14 +1,16 @@
 import React, { useEffect, useRef, useState } from "react";
-import { registerPlugin } from "@capacitor/core";
 
-const GEMINI_MODEL = "gemini-3.6-flash";
-const MyraNative = registerPlugin("MyraNative");
+const GEMINI_MODEL = "gemini-2.5-flash";
 
 function App() {
   const [tab, setTab] = useState("home");
   const [input, setInput] = useState("");
   const [thinking, setThinking] = useState(false);
   const [listening, setListening] = useState(false);
+  const [wakeListening, setWakeListening] = useState(false);
+  const [wakeEnabled, setWakeEnabled] = useState(
+    () => localStorage.getItem("myra_wake_enabled") !== "false"
+  );
 
   const [messages, setMessages] = useState([
     {
@@ -39,12 +41,65 @@ function App() {
     () => localStorage.getItem("myra_selected_voice") || ""
   );
 
+  const [selectedVoiceProfile, setSelectedVoiceProfile] = useState(
+    () => Number(localStorage.getItem("myra_voice_profile") || "1")
+  );
+
   const [previewingVoice, setPreviewingVoice] = useState("");
 
   const inputRef = useRef(null);
   const recognitionRef = useRef(null);
+  const wakeRecognitionRef = useRef(null);
+  const shouldKeepWakeListeningRef = useRef(false);
 
-  /* ---------------- VOICE LIST ---------------- */
+  /* =========================================================
+     INPUT
+  ========================================================= */
+
+  const focusInput = () => {
+    setTimeout(() => {
+      inputRef.current?.focus();
+    }, 80);
+  };
+
+  /* =========================================================
+     SAVE SETTINGS
+  ========================================================= */
+
+  useEffect(() => {
+    localStorage.setItem("myra_voice_enabled", String(voice));
+  }, [voice]);
+
+  useEffect(() => {
+    localStorage.setItem("myra_language", language);
+  }, [language]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      "myra_wake_enabled",
+      String(wakeEnabled)
+    );
+  }, [wakeEnabled]);
+
+  useEffect(() => {
+    if (selectedVoiceName) {
+      localStorage.setItem(
+        "myra_selected_voice",
+        selectedVoiceName
+      );
+    }
+  }, [selectedVoiceName]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      "myra_voice_profile",
+      String(selectedVoiceProfile)
+    );
+  }, [selectedVoiceProfile]);
+
+  /* =========================================================
+     TTS VOICES
+  ========================================================= */
 
   const loadVoices = () => {
     if (!("speechSynthesis" in window)) {
@@ -156,132 +211,64 @@ function App() {
     };
   }, []);
 
-  useEffect(() => {
-    localStorage.setItem(
-      "myra_voice_enabled",
-      String(voice)
-    );
-  }, [voice]);
+  /* =========================================================
+     VOICE PROFILES
+  ========================================================= */
 
-  useEffect(() => {
-    localStorage.setItem(
-      "myra_language",
-      language
-    );
-  }, [language]);
-
-  useEffect(() => {
-    if (selectedVoiceName) {
-      localStorage.setItem(
-        "myra_selected_voice",
-        selectedVoiceName
-      );
-    }
-  }, [selectedVoiceName]);
-
-  useEffect(() => {
-    return () => {
-      try {
-        recognitionRef.current?.stop();
-      } catch (e) {}
-
-      try {
-        window.speechSynthesis?.cancel();
-      } catch (e) {}
+  const getVoiceSettings = (profile) => {
+    const profiles = {
+      1: { rate: 0.95, pitch: 1.05 },
+      2: { rate: 0.9, pitch: 1.12 },
+      3: { rate: 1.0, pitch: 1.0 },
+      4: { rate: 0.88, pitch: 1.18 },
+      5: { rate: 1.05, pitch: 1.08 },
+      6: { rate: 0.93, pitch: 1.22 },
+      7: { rate: 1.02, pitch: 1.15 },
     };
-  }, []);
 
-  /* ---------------- INPUT ---------------- */
-
-  const focusInput = () => {
-    setTimeout(() => {
-      inputRef.current?.focus();
-    }, 80);
+    return profiles[profile] || profiles[1];
   };
-
-  /* ---------------- MICROPHONE ---------------- */
-
-  const requestMicrophonePermission = async () => {
-    try {
-      /*
-       * Check native Android permission state.
-       * We DO NOT stop here when granted is false.
-       *
-       * getUserMedia() below is responsible for triggering
-       * the Android WebView microphone permission request.
-       */
-      try {
-        await MyraNative.requestPermission({
-          permission: "RECORD_AUDIO",
-        });
-      } catch (nativeError) {
-        console.warn(
-          "Native microphone check:",
-          nativeError
-        );
-      }
-
-      if (
-        !navigator.mediaDevices ||
-        !navigator.mediaDevices.getUserMedia
-      ) {
-        alert(
-          "Microphone is not supported on this device."
-        );
-
-        return false;
-      }
-
-      const stream =
-        await navigator.mediaDevices.getUserMedia({
-          audio: true,
-        });
-
-      stream.getTracks().forEach((track) => {
-        track.stop();
-      });
-
-      return true;
-    } catch (error) {
-      console.error(
-        "Microphone permission error:",
-        error
-      );
-
-      alert(
-        "Microphone permission is blocked.\n\n" +
-          "Open Android Settings → Apps → MYRA AI → Permissions → Microphone → Allow."
-      );
-
-      return false;
-    }
-  };
-
-  /* ---------------- TEXT TO SPEECH ---------------- */
 
   const getSelectedVoice = () => {
     if (!("speechSynthesis" in window)) {
       return null;
     }
 
-    if (!selectedVoiceName) {
+    const voices = window.speechSynthesis.getVoices();
+
+    if (!voices.length) {
       return null;
     }
 
-    const voices =
-      window.speechSynthesis.getVoices();
-
-    return (
-      voices.find(
+    if (selectedVoiceName) {
+      const selected = voices.find(
         (item) => item.name === selectedVoiceName
-      ) || null
-    );
+      );
+
+      if (selected) {
+        return selected;
+      }
+    }
+
+    if (ttsVoices.length) {
+      const index =
+        Math.max(1, Math.min(7, selectedVoiceProfile)) - 1;
+
+      return ttsVoices[index] || ttsVoices[0];
+    }
+
+    return null;
   };
+
+  /* =========================================================
+     TEXT TO SPEECH
+  ========================================================= */
 
   const speak = (text) => {
     if (
       !voice ||
-      !("speechSynthesis" in window)
+      !("speechSynthesis" in window) ||
+      !text
     ) {
       return;
     }
@@ -292,21 +279,22 @@ function App() {
       const utterance =
         new SpeechSynthesisUtterance(text);
 
+      const selected = getSelectedVoice();
+      const settings =
+        getVoiceSettings(selectedVoiceProfile);
+
       utterance.lang =
         language === "Bangla"
           ? "bn-BD"
           : "en-US";
-
-      const selected =
-        getSelectedVoice();
 
       if (selected) {
         utterance.voice = selected;
         utterance.lang = selected.lang;
       }
 
-      utterance.rate = 0.95;
-      utterance.pitch = 1;
+      utterance.rate = settings.rate;
+      utterance.pitch = settings.pitch;
 
       utterance.onend = () => {
         setPreviewingVoice("");
@@ -316,32 +304,31 @@ function App() {
         setPreviewingVoice("");
       };
 
-      window.speechSynthesis.speak(
-        utterance
-      );
+      window.speechSynthesis.speak(utterance);
     } catch (error) {
-      console.error(
-        "Speech error:",
-        error
-      );
+      console.error("Speech error:", error);
     }
   };
 
-  const previewVoice = (voiceItem) => {
+  /* =========================================================
+     VOICE PREVIEW
+  ========================================================= */
+
+  const previewVoice = (voiceItem, profileNumber) => {
     if (!("speechSynthesis" in window)) {
       alert(
         "Text-to-speech is not supported on this device."
       );
-
       return;
     }
 
     try {
       window.speechSynthesis.cancel();
 
-      setPreviewingVoice(
-        voiceItem.name
-      );
+      const key =
+        `${voiceItem?.name || "profile"}-${profileNumber}`;
+
+      setPreviewingVoice(key);
 
       const text =
         language === "Bangla"
@@ -351,10 +338,21 @@ function App() {
       const utterance =
         new SpeechSynthesisUtterance(text);
 
-      utterance.voice = voiceItem;
-      utterance.lang = voiceItem.lang;
-      utterance.rate = 0.95;
-      utterance.pitch = 1;
+      if (voiceItem) {
+        utterance.voice = voiceItem;
+        utterance.lang = voiceItem.lang;
+      } else {
+        utterance.lang =
+          language === "Bangla"
+            ? "bn-BD"
+            : "en-US";
+      }
+
+      const settings =
+        getVoiceSettings(profileNumber);
+
+      utterance.rate = settings.rate;
+      utterance.pitch = settings.pitch;
 
       utterance.onend = () => {
         setPreviewingVoice("");
@@ -364,55 +362,79 @@ function App() {
         setPreviewingVoice("");
       };
 
-      window.speechSynthesis.speak(
-        utterance
-      );
+      window.speechSynthesis.speak(utterance);
     } catch (error) {
-      console.error(
-        "Voice preview error:",
-        error
-      );
-
+      console.error("Voice preview error:", error);
       setPreviewingVoice("");
     }
   };
 
-  const selectVoice = (voiceItem) => {
+  /* =========================================================
+     SELECT VOICE
+  ========================================================= */
+
+  const selectVoice = (voiceItem, profileNumber) => {
     try {
       window.speechSynthesis?.cancel();
     } catch (e) {}
 
-    setSelectedVoiceName(
-      voiceItem.name
-    );
+    setSelectedVoiceProfile(profileNumber);
 
-    const testText =
+    if (voiceItem) {
+      setSelectedVoiceName(voiceItem.name);
+    }
+
+    const text =
       language === "Bangla"
         ? "হ্যালো, আমি মাইরা।"
         : "Hello, I'm Myra.";
 
     try {
       const utterance =
-        new SpeechSynthesisUtterance(
-          testText
-        );
+        new SpeechSynthesisUtterance(text);
 
-      utterance.voice = voiceItem;
-      utterance.lang = voiceItem.lang;
-      utterance.rate = 0.95;
-      utterance.pitch = 1;
+      if (voiceItem) {
+        utterance.voice = voiceItem;
+        utterance.lang = voiceItem.lang;
+      } else {
+        utterance.lang =
+          language === "Bangla"
+            ? "bn-BD"
+            : "en-US";
+      }
 
-      window.speechSynthesis.speak(
-        utterance
-      );
+      const settings =
+        getVoiceSettings(profileNumber);
+
+      utterance.rate = settings.rate;
+      utterance.pitch = settings.pitch;
+
+      window.speechSynthesis.speak(utterance);
     } catch (e) {}
 
     alert(
-      `MYRA voice selected:\n${voiceItem.name}`
+      `MYRA Woman Voice ${profileNumber} selected.`
     );
   };
 
-  /* ---------------- SPEECH RECOGNITION ---------------- */
+  /* =========================================================
+     MICROPHONE
+     ========================================================= */
+
+  const checkMicrophoneSupport = () => {
+    const SpeechRecognition =
+      window.SpeechRecognition ||
+      window.webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      alert(
+        "Voice recognition is not supported on this device."
+      );
+      return false;
+    }
+
+    return true;
+  };
 
   const startListening = async () => {
     if (listening) {
@@ -423,22 +445,7 @@ function App() {
       return;
     }
 
-    const allowed =
-      await requestMicrophonePermission();
-
-    if (!allowed) {
-      return;
-    }
-
-    const SpeechRecognition =
-      window.SpeechRecognition ||
-      window.webkitSpeechRecognition;
-
-    if (!SpeechRecognition) {
-      alert(
-        "Voice recognition is not supported on this device."
-      );
-
+    if (!checkMicrophoneSupport()) {
       return;
     }
 
@@ -446,6 +453,10 @@ function App() {
       try {
         recognitionRef.current?.stop();
       } catch (e) {}
+
+      const SpeechRecognition =
+        window.SpeechRecognition ||
+        window.webkitSpeechRecognition;
 
       const recognition =
         new SpeechRecognition();
@@ -484,36 +495,253 @@ function App() {
 
         if (
           event.error === "not-allowed" ||
-          event.error ===
-            "service-not-allowed"
+          event.error === "service-not-allowed"
         ) {
           alert(
-            "Microphone permission was denied.\n\n" +
-              "Android Settings → Apps → MYRA AI → Permissions → Microphone → Allow"
+            "Microphone permission is not allowed.\n\n" +
+            "Android Settings → Apps → MYRA AI → Permissions → Microphone → Allow."
+          );
+        }
+
+        if (event.error === "audio-capture") {
+          alert(
+            "Microphone could not be accessed.\n\n" +
+            "Please check Android microphone permission."
           );
         }
       };
 
       recognition.onend = () => {
         setListening(false);
+        recognitionRef.current = null;
         focusInput();
       };
 
-      recognitionRef.current =
-        recognition;
+      recognitionRef.current = recognition;
 
       recognition.start();
     } catch (error) {
-      console.error(
-        "Voice start error:",
-        error
-      );
-
+      console.error("Voice start error:", error);
       setListening(false);
     }
   };
 
-  /* ---------------- PHONE ---------------- */
+  /* =========================================================
+     HEY MYRA WAKE WORD
+  ========================================================= */
+
+  const stopWakeWord = () => {
+    shouldKeepWakeListeningRef.current = false;
+
+    try {
+      wakeRecognitionRef.current?.stop();
+    } catch (e) {}
+
+    wakeRecognitionRef.current = null;
+    setWakeListening(false);
+  };
+
+  const startWakeWord = () => {
+    if (!wakeEnabled) {
+      return;
+    }
+
+    if (!checkMicrophoneSupport()) {
+      return;
+    }
+
+    if (shouldKeepWakeListeningRef.current) {
+      return;
+    }
+
+    const SpeechRecognition =
+      window.SpeechRecognition ||
+      window.webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      return;
+    }
+
+    shouldKeepWakeListeningRef.current = true;
+
+    const createWakeRecognition = () => {
+      if (!shouldKeepWakeListeningRef.current) {
+        return;
+      }
+
+      try {
+        const recognition =
+          new SpeechRecognition();
+
+        recognition.lang = "en-US";
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.maxAlternatives = 1;
+
+        recognition.onstart = () => {
+          setWakeListening(true);
+        };
+
+        recognition.onresult = (event) => {
+          let transcript = "";
+
+          for (
+            let i = event.resultIndex;
+            i < event.results.length;
+            i++
+          ) {
+            transcript +=
+              event.results[i][0]?.transcript || "";
+          }
+
+          const lower =
+            transcript.toLowerCase().trim();
+
+          const wakeDetected =
+            lower.includes("hey myra") ||
+            lower.includes("hey mira");
+
+          if (wakeDetected) {
+            try {
+              recognition.stop();
+            } catch (e) {}
+
+            shouldKeepWakeListeningRef.current = false;
+            setWakeListening(false);
+
+            setTimeout(() => {
+              startListening();
+            }, 250);
+          }
+        };
+
+        recognition.onerror = (event) => {
+          console.warn(
+            "Wake word error:",
+            event.error
+          );
+
+          if (
+            event.error === "not-allowed" ||
+            event.error === "service-not-allowed"
+          ) {
+            shouldKeepWakeListeningRef.current = false;
+            setWakeListening(false);
+
+            alert(
+              "Microphone permission is required for Hey Myra.\n\n" +
+              "Android Settings → Apps → MYRA AI → Permissions → Microphone → Allow."
+            );
+          }
+        };
+
+        recognition.onend = () => {
+          wakeRecognitionRef.current = null;
+
+          if (
+            shouldKeepWakeListeningRef.current &&
+            wakeEnabled
+          ) {
+            setTimeout(() => {
+              createWakeRecognition();
+            }, 500);
+          } else {
+            setWakeListening(false);
+          }
+        };
+
+        wakeRecognitionRef.current = recognition;
+        recognition.start();
+      } catch (error) {
+        console.error(
+          "Wake word start error:",
+          error
+        );
+
+        wakeRecognitionRef.current = null;
+        setWakeListening(false);
+
+        if (shouldKeepWakeListeningRef.current) {
+          setTimeout(() => {
+            createWakeRecognition();
+          }, 1000);
+        }
+      }
+    };
+
+    createWakeRecognition();
+  };
+
+  /* =========================================================
+     START HEY MYRA WHEN APP OPENS
+  ========================================================= */
+
+  useEffect(() => {
+    if (!wakeEnabled) {
+      stopWakeWord();
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      startWakeWord();
+    }, 1500);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [wakeEnabled]);
+
+  /* =========================================================
+     APP WAKE EVENT
+     ========================================================= */
+
+  useEffect(() => {
+    const handleMyraWake = () => {
+      stopWakeWord();
+
+      setTimeout(() => {
+        startListening();
+      }, 250);
+    };
+
+    window.addEventListener(
+      "myra-wake",
+      handleMyraWake
+    );
+
+    return () => {
+      window.removeEventListener(
+        "myra-wake",
+        handleMyraWake
+      );
+    };
+  }, [language, listening]);
+
+  /* =========================================================
+     CLEANUP
+  ========================================================= */
+
+  useEffect(() => {
+    return () => {
+      try {
+        recognitionRef.current?.stop();
+      } catch (e) {}
+
+      try {
+        wakeRecognitionRef.current?.stop();
+      } catch (e) {}
+
+      try {
+        window.speechSynthesis?.cancel();
+      } catch (e) {}
+
+      shouldKeepWakeListeningRef.current = false;
+    };
+  }, []);
+
+  /* =========================================================
+     PHONE CALL
+  ========================================================= */
 
   const makeCall = (number) => {
     const cleanNumber =
@@ -526,17 +754,16 @@ function App() {
       alert(
         "Please provide a valid phone number."
       );
-
       return;
     }
 
     window.location.href =
-      `tel:${encodeURIComponent(
-        cleanNumber
-      )}`;
+      `tel:${encodeURIComponent(cleanNumber)}`;
   };
 
-  /* ---------------- MESSAGES ---------------- */
+  /* =========================================================
+     MESSAGES
+  ========================================================= */
 
   const addUser = (text) => {
     setMessages((prev) => [
@@ -560,11 +787,15 @@ function App() {
     speak(text);
   };
 
-  /* ---------------- COMMANDS ---------------- */
+  /* =========================================================
+     COMMANDS
+  ========================================================= */
 
   const processCommand = (command) => {
     const text = command.trim();
     const lower = text.toLowerCase();
+
+    /* CALL */
 
     if (
       lower.startsWith("call ") ||
@@ -593,6 +824,8 @@ function App() {
       return true;
     }
 
+    /* SMS */
+
     if (
       lower.startsWith("sms ") ||
       lower.startsWith("send sms ") ||
@@ -601,7 +834,7 @@ function App() {
       lower.startsWith("এসএমএস ")
     ) {
       addAssistant(
-        "I can open your Messages app. You can review the message and press Send yourself."
+        "I can help you prepare the message. Open your Messages app, review it, and press Send yourself."
       );
 
       return true;
@@ -610,7 +843,9 @@ function App() {
     return false;
   };
 
-  /* ---------------- GEMINI ---------------- */
+  /* =========================================================
+     GEMINI
+  ========================================================= */
 
   const getGeminiUrl = () => {
     return (
@@ -619,9 +854,7 @@ function App() {
     );
   };
 
-  const sendMessage = async (
-    customText = null
-  ) => {
+  const sendMessage = async (customText = null) => {
     const text = (
       customText !== null
         ? customText
@@ -652,7 +885,9 @@ function App() {
 
     if (!key) {
       addAssistant(
-        "Gemini is not connected yet. Open Settings and add your Gemini API key."
+        language === "Bangla"
+          ? "Gemini এখনো connected নয়। Settings থেকে Gemini API key যোগ করুন।"
+          : "Gemini is not connected yet. Open Settings and add your Gemini API key."
       );
 
       focusInput();
@@ -768,7 +1003,7 @@ function App() {
         `Gemini connection failed.\n\n${
           error?.message ||
           "Unknown error."
-        }\n\nCheck your API key, internet connection and Gemini API access.`
+        }\n\nCheck your API key and internet connection.`
       );
     } finally {
       setThinking(false);
@@ -776,7 +1011,9 @@ function App() {
     }
   };
 
-  /* ---------------- QUICK ACTIONS ---------------- */
+  /* =========================================================
+     QUICK ACTIONS
+  ========================================================= */
 
   const quickAsk = (text) => {
     setTab("chat");
@@ -786,7 +1023,9 @@ function App() {
     }, 120);
   };
 
-  /* ---------------- API SETTINGS ---------------- */
+  /* =========================================================
+     API SETTINGS
+  ========================================================= */
 
   const saveApiKey = () => {
     const key = apiKey.trim();
@@ -831,7 +1070,9 @@ function App() {
     );
   };
 
-  /* ---------------- HOME ---------------- */
+  /* =========================================================
+     HOME
+  ========================================================= */
 
   const renderHome = () => (
     <div className="screen">
@@ -887,6 +1128,22 @@ function App() {
           {connected
             ? "AI Connected"
             : "AI Ready"}
+
+        </div>
+
+        <div className="connection-status hero-status">
+
+          <span
+            className={
+              wakeListening
+                ? "status-blue"
+                : "status-off"
+            }
+          />
+
+          {wakeListening
+            ? "Hey Myra is listening"
+            : "Hey Myra is off"}
 
         </div>
 
@@ -1028,7 +1285,9 @@ function App() {
     </div>
   );
 
-  /* ---------------- CHAT ---------------- */
+  /* =========================================================
+     CHAT
+  ========================================================= */
 
   const renderChat = () => (
     <div className="screen chat-screen">
@@ -1147,7 +1406,9 @@ function App() {
     </div>
   );
 
-  /* ---------------- SETTINGS ---------------- */
+  /* =========================================================
+     SETTINGS
+  ========================================================= */
 
   const renderSettings = () => (
     <div className="screen settings-screen">
@@ -1271,6 +1532,44 @@ function App() {
 
           </div>
 
+          <div className="toggle-card">
+
+            <span>
+              Hey Myra wake word
+            </span>
+
+            <label className="switch">
+
+              <input
+                type="checkbox"
+                checked={wakeEnabled}
+                onChange={(e) => {
+                  const enabled =
+                    e.target.checked;
+
+                  setWakeEnabled(enabled);
+
+                  if (!enabled) {
+                    stopWakeWord();
+                  } else {
+                    setTimeout(
+                      startWakeWord,
+                      300
+                    );
+                  }
+                }}
+              />
+
+              <span />
+
+            </label>
+
+          </div>
+
+          <div className="note">
+            Say "Hey Myra" while MYRA is open to start voice listening.
+          </div>
+
         </div>
 
         {/* WOMAN VOICES */}
@@ -1285,103 +1584,105 @@ function App() {
             Choose the voice MYRA will use for spoken replies.
           </div>
 
-          {ttsVoices.length === 0 ? (
+          <div className="voice-list">
 
-            <div className="note">
-              No compatible text-to-speech voices were found.
-              Please enable or install voices in your Android
-              Text-to-Speech settings.
-            </div>
+            {Array.from({ length: 7 }).map(
+              (_, index) => {
 
-          ) : (
+                const profileNumber =
+                  index + 1;
 
-            <div className="voice-list">
+                const voiceItem =
+                  ttsVoices[index] || null;
 
-              {ttsVoices.map(
-                (voiceItem, index) => {
+                const selected =
+                  selectedVoiceProfile ===
+                  profileNumber;
 
-                  const selected =
-                    selectedVoiceName ===
-                    voiceItem.name;
+                const previewKey =
+                  `${voiceItem?.name || "profile"}-${profileNumber}`;
 
-                  const previewing =
-                    previewingVoice ===
-                    voiceItem.name;
+                const previewing =
+                  previewingVoice ===
+                  previewKey;
 
-                  return (
+                return (
 
-                    <div
-                      key={`${voiceItem.name}-${voiceItem.lang}-${index}`}
-                      className={
-                        selected
-                          ? "voice-option selected"
-                          : "voice-option"
-                      }
-                    >
+                  <div
+                    key={profileNumber}
+                    className={
+                      selected
+                        ? "voice-option selected"
+                        : "voice-option"
+                    }
+                  >
 
-                      <div className="voice-info">
+                    <div className="voice-info">
 
-                        <div className="voice-number">
-                          {index + 1}
-                        </div>
-
-                        <div>
-
-                          <div className="voice-name">
-                            Woman Voice {index + 1}
-                          </div>
-
-                          <div className="voice-language">
-                            {voiceItem.lang} •{" "}
-                            {voiceItem.name}
-                          </div>
-
-                        </div>
-
+                      <div className="voice-number">
+                        {profileNumber}
                       </div>
 
-                      <div className="voice-actions">
+                      <div>
 
-                        <button
-                          className="preview-button"
-                          onClick={() =>
-                            previewVoice(
-                              voiceItem
-                            )
-                          }
-                        >
-                          {previewing
-                            ? "■"
-                            : "▶"}
-                        </button>
+                        <div className="voice-name">
+                          Woman Voice {profileNumber}
+                        </div>
 
-                        <button
-                          className={
-                            selected
-                              ? "select-button selected"
-                              : "select-button"
-                          }
-                          onClick={() =>
-                            selectVoice(
-                              voiceItem
-                            )
-                          }
-                        >
-                          {selected
-                            ? "Selected"
-                            : "Select"}
-                        </button>
+                        <div className="voice-language">
+
+                          {voiceItem
+                            ? `${voiceItem.lang} • ${voiceItem.name}`
+                            : "Android TTS profile"}
+
+                        </div>
 
                       </div>
 
                     </div>
-                  );
-                }
-              )}
 
-            </div>
+                    <div className="voice-actions">
 
-          )}
+                      <button
+                        className="preview-button"
+                        onClick={() =>
+                          previewVoice(
+                            voiceItem,
+                            profileNumber
+                          )
+                        }
+                      >
+                        {previewing
+                          ? "■"
+                          : "▶"}
+                      </button>
+
+                      <button
+                        className={
+                          selected
+                            ? "select-button selected"
+                            : "select-button"
+                        }
+                        onClick={() =>
+                          selectVoice(
+                            voiceItem,
+                            profileNumber
+                          )
+                        }
+                      >
+                        {selected
+                          ? "Selected"
+                          : "Select"}
+                      </button>
+
+                    </div>
+
+                  </div>
+                );
+              }
+            )}
+
+          </div>
 
           <button
             className="connect-button"
@@ -1389,6 +1690,11 @@ function App() {
           >
             🔄 Refresh Voices
           </button>
+
+          <div className="note">
+            MYRA uses voices available from your Android Text-to-Speech engine.
+            The 7 profiles adjust voice style, pitch and speed.
+          </div>
 
         </div>
 
@@ -1455,7 +1761,9 @@ function App() {
     </div>
   );
 
-  /* ---------------- SCREEN ---------------- */
+  /* =========================================================
+     SCREEN
+  ========================================================= */
 
   const renderScreen = () => {
 
@@ -1470,7 +1778,9 @@ function App() {
     return renderHome();
   };
 
-  /* ---------------- APP ---------------- */
+  /* =========================================================
+     APP
+  ========================================================= */
 
   return (
     <div className="myra-app">
